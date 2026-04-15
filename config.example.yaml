@@ -1,0 +1,32 @@
+server:
+  listen: ":8080"
+  tokens:
+    - "proxy-token-1"
+    - "proxy-token-2"
+
+transport:
+  max_idle_conns: 512
+  max_idle_conns_per_host: 128
+  max_conns_per_host: 0
+  idle_conn_timeout_sec: 90
+
+providers:
+  - name: "openai-main"
+    type: "openai"
+    base_path: "/openai"
+    upstream_base_url: "https://api.openai.com"
+    upstream_api_key: "${OPENAI_API_KEY}"
+
+  - name: "glm-prod"
+    type: "openai"
+    base_path: "/glm"
+    upstream_base_url: "https://open.bigmodel.cn/api/paas"
+    upstream_api_key: "${GLM_API_KEY}"
+
+  - name: "claude-main"
+    type: "anthropic"
+    base_path: "/anthropic"
+    upstream_base_url: "https://api.anthropic.com"
+    upstream_api_key: "${ANTHROPIC_API_KEY}"
+    upstream_headers:
+      anthropic-version: "2023-06-01"
