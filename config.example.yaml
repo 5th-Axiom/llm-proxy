@@ -14,13 +14,13 @@ providers:
   - name: "openai-main"
     type: "openai"
     base_path: "/openai"
-    upstream_base_url: "https://api.openai.com"
+    upstream_base_url: "https://api.openai.com/v1"
     upstream_api_key: "${OPENAI_API_KEY}"
 
   - name: "glm-prod"
     type: "openai"
     base_path: "/glm"
-    upstream_base_url: "https://open.bigmodel.cn/api/paas"
+    upstream_base_url: "https://open.bigmodel.cn/api/coding/paas/v4"
     upstream_api_key: "${GLM_API_KEY}"
 
   - name: "claude-main"

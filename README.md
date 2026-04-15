@@ -48,13 +48,13 @@ providers:
   - name: "openai-main"
     type: "openai"
     base_path: "/openai"
-    upstream_base_url: "https://api.openai.com"
+    upstream_base_url: "https://api.openai.com/v1"
     upstream_api_key: "${OPENAI_API_KEY}"
 
   - name: "glm-prod"
     type: "openai"
     base_path: "/glm"
-    upstream_base_url: "https://open.bigmodel.cn/api/paas"
+    upstream_base_url: "https://open.bigmodel.cn/api/coding/paas/v4"
     upstream_api_key: "${GLM_API_KEY}"
 
   - name: "claude-main"
@@ -71,6 +71,9 @@ providers:
 ```bash
 go run ./cmd/llm-proxy -config config.example.yaml
 ```
+
+`openai` 类型的 `upstream_base_url` 可以直接写厂商要求的完整 base URL。
+如果这个 URL 已经包含版本段，比如 `https://api.openai.com/v1` 或 `https://open.bigmodel.cn/api/coding/paas/v4`，代理不会再重复拼一个 `/v1`。
 
 ## 调用示例
 

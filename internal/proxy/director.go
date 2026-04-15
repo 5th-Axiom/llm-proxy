@@ -5,12 +5,16 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
+	"regexp"
 	"strings"
 
 	"llm-proxy/internal/config"
 	anthropicprovider "llm-proxy/internal/providers/anthropic"
 	openaiprovider "llm-proxy/internal/providers/openai"
 )
+
+var versionSegmentPattern = regexp.MustCompile(`^v[0-9]+(?:[A-Za-z0-9._-]*)?$`)
 
 type Forwarder struct {
 	client *http.Client
@@ -41,12 +45,20 @@ func (f *Forwarder) Forward(w http.ResponseWriter, r *http.Request, provider con
 }
 
 func buildUpstreamURL(baseURL, path, rawQuery string) (*url.URL, error) {
-	target, err := url.Parse(strings.TrimRight(baseURL, "/") + path)
+	base, err := url.Parse(strings.TrimRight(baseURL, "/"))
 	if err != nil {
 		return nil, fmt.Errorf("build upstream url: %w", err)
 	}
-	target.RawQuery = rawQuery
-	return target, nil
+
+	requestPath := normalizeUpstreamPath(path)
+	if hasVersionedBasePath(base.Path) {
+		requestPath = trimLeadingAPIVersion(requestPath)
+	}
+
+	base.Path = joinURLPath(base.Path, requestPath)
+	base.RawPath = ""
+	base.RawQuery = rawQuery
+	return base, nil
 }
 
 func buildUpstreamRequest(r *http.Request, target *url.URL, provider config.ProviderConfig) (*http.Request, error) {
@@ -106,4 +118,43 @@ func isHopByHopHeader(key string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeUpstreamPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(p, "/") {
+		return "/" + p
+	}
+	return p
+}
+
+func hasVersionedBasePath(basePath string) bool {
+	if basePath == "" || basePath == "/" {
+		return false
+	}
+	segment := path.Base(strings.TrimRight(basePath, "/"))
+	return versionSegmentPattern.MatchString(segment)
+}
+
+func trimLeadingAPIVersion(requestPath string) string {
+	if requestPath == "/v1" {
+		return "/"
+	}
+	if strings.HasPrefix(requestPath, "/v1/") {
+		trimmed := strings.TrimPrefix(requestPath, "/v1")
+		if trimmed == "" {
+			return "/"
+		}
+		return trimmed
+	}
+	return requestPath
+}
+
+func joinURLPath(basePath, requestPath string) string {
+	if basePath == "" || basePath == "/" {
+		return normalizeUpstreamPath(requestPath)
+	}
+	return strings.TrimRight(basePath, "/") + normalizeUpstreamPath(requestPath)
 }
