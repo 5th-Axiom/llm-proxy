@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,22 +13,57 @@ import (
 	"llm-proxy/internal/config"
 	anthropicprovider "llm-proxy/internal/providers/anthropic"
 	openaiprovider "llm-proxy/internal/providers/openai"
+	"llm-proxy/internal/tokencount"
 )
 
 var versionSegmentPattern = regexp.MustCompile(`^v[0-9]+(?:[A-Za-z0-9._-]*)?$`)
 
 type Forwarder struct {
-	client *http.Client
+	client        *http.Client
+	tokenCountCfg config.TokenCountingConfig
 }
 
-func NewForwarder(client *http.Client) *Forwarder {
-	return &Forwarder{client: client}
+func NewForwarder(client *http.Client, tokenCountCfg config.TokenCountingConfig) *Forwarder {
+	return &Forwarder{client: client, tokenCountCfg: tokenCountCfg}
 }
 
 func (f *Forwarder) Forward(w http.ResponseWriter, r *http.Request, provider config.ProviderConfig, upstreamPath string) error {
 	targetURL, err := buildUpstreamURL(provider.UpstreamBaseURL, upstreamPath, r.URL.RawQuery)
 	if err != nil {
 		return err
+	}
+
+	tokenCounting := provider.IsTokenCountingEnabled(f.tokenCountCfg)
+
+	var tc *tokencount.TokenContext
+	if tokenCounting && r.Body != nil {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			return fmt.Errorf("read request body for token counting: %w", err)
+		}
+		r.Body.Close()
+
+		rc := tokencount.ParseRequestContent(bodyBytes)
+		promptTokens := tokencount.CountPromptTokens(string(provider.Type), bodyBytes)
+
+		tc = &tokencount.TokenContext{
+			ProviderName: provider.Name,
+			ProviderType: string(provider.Type),
+			Model:        rc.Model,
+			Enabled:      true,
+		}
+		tc.Counts.PromptTokens = promptTokens
+		tc.Counts.PromptEstimated = true
+
+		if rc.Stream {
+			tc.Parser = tokencount.NewStreamingUsageParser(string(provider.Type), rc.Model)
+		}
+
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r.ContentLength = int64(len(bodyBytes))
+
+		ctx := tokencount.WithContext(r.Context(), tc)
+		r = r.WithContext(ctx)
 	}
 
 	upstreamReq, err := buildUpstreamRequest(r, targetURL, provider)
@@ -41,7 +77,7 @@ func (f *Forwarder) Forward(w http.ResponseWriter, r *http.Request, provider con
 	}
 	defer resp.Body.Close()
 
-	return writeUpstreamResponse(w, r, resp)
+	return writeUpstreamResponse(w, r, resp, tc)
 }
 
 func buildUpstreamURL(baseURL, path, rawQuery string) (*url.URL, error) {

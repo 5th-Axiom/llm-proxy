@@ -1,12 +1,15 @@
 package proxy
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"strings"
+
+	"llm-proxy/internal/tokencount"
 )
 
-func writeUpstreamResponse(w http.ResponseWriter, req *http.Request, resp *http.Response) error {
+func writeUpstreamResponse(w http.ResponseWriter, req *http.Request, resp *http.Response, tc *tokencount.TokenContext) error {
 	copyResponseHeaders(w.Header(), resp.Header)
 
 	streaming := isStreaming(req, resp)
@@ -19,14 +22,45 @@ func writeUpstreamResponse(w http.ResponseWriter, req *http.Request, resp *http.
 	writer := io.Writer(w)
 	if streaming {
 		if flusher, ok := w.(http.Flusher); ok {
-			writer = &flushWriter{writer: w, flusher: flusher}
+			fw := &flushWriter{writer: w, flusher: flusher}
+			if tc != nil && tc.Enabled && tc.Parser != nil {
+				writer = &tokenCountingWriter{writer: fw, parser: tc.Parser}
+			} else {
+				writer = fw
+			}
 		}
+	}
+
+	if tc != nil && tc.Enabled && !streaming {
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		usage := tokencount.ParseNonStreamingUsage(bodyBytes)
+		if usage.Found {
+			tc.Counts.CompletionTokens = usage.CompletionTokens
+			tc.Counts.TotalTokens = usage.TotalTokens
+		} else {
+			rc := tokencount.ParseRequestContent(nil)
+			_ = rc
+			tc.Counts.CompletionTokens = tokencount.EstimateCompletionTokens(tc.ProviderType, tc.Model, string(bodyBytes))
+			tc.Counts.TotalTokens = tc.Counts.PromptTokens + tc.Counts.CompletionTokens
+			tc.Counts.OutputEstimated = true
+		}
+		_, err = io.CopyBuffer(writer, bytes.NewReader(bodyBytes), make([]byte, 32*1024))
+		return err
 	}
 
 	_, err := io.CopyBuffer(writer, resp.Body, make([]byte, 32*1024))
 	if streaming {
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
+		}
+		if tc != nil && tc.Enabled && tc.Parser != nil {
+			counts := tc.Parser.Finalize()
+			tc.Counts.CompletionTokens = counts.CompletionTokens
+			tc.Counts.TotalTokens = counts.TotalTokens
+			tc.Counts.OutputEstimated = counts.OutputEstimated
 		}
 	}
 	return err
@@ -58,4 +92,18 @@ func (w *flushWriter) Write(p []byte) (int, error) {
 		w.flusher.Flush()
 	}
 	return n, err
+}
+
+type tokenCountingWriter struct {
+	writer io.Writer
+	parser *tokencount.StreamingUsageParser
+}
+
+func (w *tokenCountingWriter) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	if err != nil {
+		return n, err
+	}
+	w.parser.ProcessChunk(p)
+	return n, nil
 }

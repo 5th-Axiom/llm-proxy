@@ -7,17 +7,23 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+
+	"llm-proxy/internal/tokencount"
 )
 
 type Metrics struct {
 	mu                sync.RWMutex
 	requestsTotal     uint64
 	responsesByStatus map[int]uint64
+	promptTokens      map[string]uint64
+	completionTokens  map[string]uint64
 }
 
 func NewMetrics() *Metrics {
 	return &Metrics{
 		responsesByStatus: make(map[int]uint64),
+		promptTokens:      make(map[string]uint64),
+		completionTokens:  make(map[string]uint64),
 	}
 }
 
@@ -29,6 +35,12 @@ func (m *Metrics) Middleware(next http.Handler) http.Handler {
 		m.mu.Lock()
 		m.requestsTotal++
 		m.responsesByStatus[recorder.status]++
+
+		if tc := tokencount.FromContext(r.Context()); tc != nil && tc.Enabled {
+			provider := tc.ProviderName
+			m.promptTokens[provider] += uint64(tc.Counts.PromptTokens)
+			m.completionTokens[provider] += uint64(tc.Counts.CompletionTokens)
+		}
 		m.mu.Unlock()
 	})
 }
@@ -66,6 +78,20 @@ func (m *Metrics) writePrometheus(w http.ResponseWriter) error {
 		_, _ = fmt.Fprintf(w, "llm_proxy_responses_total{status=\"%d\"} %d\n", status, m.responsesByStatus[status])
 	}
 
+	if len(m.promptTokens) > 0 || len(m.completionTokens) > 0 {
+		_, _ = fmt.Fprintf(w, "\n# HELP llm_proxy_prompt_tokens_total Total prompt tokens by provider.\n")
+		_, _ = fmt.Fprintf(w, "# TYPE llm_proxy_prompt_tokens_total counter\n")
+		for _, provider := range sortedStringKeys(m.promptTokens) {
+			_, _ = fmt.Fprintf(w, "llm_proxy_prompt_tokens_total{provider=\"%s\"} %d\n", provider, m.promptTokens[provider])
+		}
+
+		_, _ = fmt.Fprintf(w, "\n# HELP llm_proxy_completion_tokens_total Total completion tokens by provider.\n")
+		_, _ = fmt.Fprintf(w, "# TYPE llm_proxy_completion_tokens_total counter\n")
+		for _, provider := range sortedStringKeys(m.completionTokens) {
+			_, _ = fmt.Fprintf(w, "llm_proxy_completion_tokens_total{provider=\"%s\"} %d\n", provider, m.completionTokens[provider])
+		}
+	}
+
 	return nil
 }
 
@@ -78,10 +104,40 @@ func (m *Metrics) snapshot() map[string]any {
 		statuses[strconv.Itoa(status)] = count
 	}
 
-	return map[string]any{
+	result := map[string]any{
 		"requests_total":      m.requestsTotal,
 		"responses_by_status": statuses,
 	}
+
+	if len(m.promptTokens) > 0 || len(m.completionTokens) > 0 {
+		tokenUsage := make(map[string]any)
+		for provider := range m.promptTokens {
+			tokenUsage[provider] = map[string]uint64{
+				"prompt_tokens":     m.promptTokens[provider],
+				"completion_tokens": m.completionTokens[provider],
+			}
+		}
+		for provider := range m.completionTokens {
+			if _, ok := tokenUsage[provider]; !ok {
+				tokenUsage[provider] = map[string]uint64{
+					"prompt_tokens":     0,
+					"completion_tokens": m.completionTokens[provider],
+				}
+			}
+		}
+		result["token_usage_by_provider"] = tokenUsage
+	}
+
+	return result
+}
+
+func sortedStringKeys(m map[string]uint64) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 type metricsRecorder struct {

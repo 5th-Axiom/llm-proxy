@@ -10,12 +10,23 @@ transport:
   max_conns_per_host: 0
   idle_conn_timeout_sec: 90
 
+# Token counting: estimate prompt tokens and extract usage from responses.
+# When enabled, token counts are recorded in /metrics and request logs.
+# Per-provider overrides take precedence over global settings.
+token_counting:
+  enabled: false
+  input_price_ratio: 1.0
+  output_price_ratio: 1.0
+
 providers:
   - name: "openai-main"
     type: "openai"
     base_path: "/openai"
     upstream_base_url: "https://api.openai.com/v1"
     upstream_api_key: "${OPENAI_API_KEY}"
+    # token_counting: true
+    # input_price_ratio: 1.0
+    # output_price_ratio: 3.0
 
   - name: "glm-prod"
     type: "openai"

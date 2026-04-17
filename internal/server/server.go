@@ -12,6 +12,7 @@ import (
 	"llm-proxy/internal/providers"
 	"llm-proxy/internal/proxy"
 	"llm-proxy/internal/router"
+	"llm-proxy/internal/tokencount"
 )
 
 func NewHandler(_ context.Context, cfg config.Config, logger *slog.Logger) (http.Handler, error) {
@@ -26,7 +27,23 @@ func NewHandler(_ context.Context, cfg config.Config, logger *slog.Logger) (http
 
 	authenticator := auth.New(cfg.Server.Tokens)
 	client := proxy.NewHTTPClient(cfg.Transport)
-	forwarder := proxy.NewForwarder(client)
+
+	tokenCountingEnabled := cfg.TokenCounting.Enabled
+	if !tokenCountingEnabled {
+		for _, p := range cfg.Providers {
+			if p.TokenCounting {
+				tokenCountingEnabled = true
+				break
+			}
+		}
+	}
+	if tokenCountingEnabled {
+		if err := tokencount.Init(); err != nil {
+			logger.Warn("tiktoken init failed, falling back to estimation", "error", err)
+		}
+	}
+
+	forwarder := proxy.NewForwarder(client, cfg.TokenCounting)
 	metrics := observability.NewMetrics()
 	proxyHandler := router.New(registry, authenticator, forwarder, logger)
 	proxyHandler = metrics.Middleware(proxyHandler)

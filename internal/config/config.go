@@ -18,9 +18,16 @@ const (
 )
 
 type Config struct {
-	Server    ServerConfig     `yaml:"server"`
-	Transport TransportConfig  `yaml:"transport"`
-	Providers []ProviderConfig `yaml:"providers"`
+	Server       ServerConfig       `yaml:"server"`
+	Transport    TransportConfig    `yaml:"transport"`
+	Providers    []ProviderConfig   `yaml:"providers"`
+	TokenCounting TokenCountingConfig `yaml:"token_counting"`
+}
+
+type TokenCountingConfig struct {
+	Enabled          bool    `yaml:"enabled"`
+	InputPriceRatio  float64 `yaml:"input_price_ratio"`
+	OutputPriceRatio float64 `yaml:"output_price_ratio"`
 }
 
 type ServerConfig struct {
@@ -42,6 +49,16 @@ type ProviderConfig struct {
 	UpstreamBaseURL string            `yaml:"upstream_base_url"`
 	UpstreamAPIKey  string            `yaml:"upstream_api_key"`
 	UpstreamHeaders map[string]string `yaml:"upstream_headers"`
+	TokenCounting   bool              `yaml:"token_counting"`
+	InputPriceRatio  float64          `yaml:"input_price_ratio"`
+	OutputPriceRatio float64          `yaml:"output_price_ratio"`
+}
+
+func (p ProviderConfig) IsTokenCountingEnabled(global TokenCountingConfig) bool {
+	if p.TokenCounting {
+		return true
+	}
+	return global.Enabled
 }
 
 func Load(path string) (Config, error) {
@@ -77,6 +94,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Transport.IdleConnTimeoutSec == 0 {
 		c.Transport.IdleConnTimeoutSec = 90
+	}
+	if c.TokenCounting.InputPriceRatio == 0 {
+		c.TokenCounting.InputPriceRatio = 1.0
+	}
+	if c.TokenCounting.OutputPriceRatio == 0 {
+		c.TokenCounting.OutputPriceRatio = 1.0
 	}
 	for i := range c.Providers {
 		c.Providers[i].BasePath = normalizeBasePath(c.Providers[i].BasePath)

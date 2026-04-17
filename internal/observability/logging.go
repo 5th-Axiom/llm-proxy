@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"llm-proxy/internal/tokencount"
 )
 
 type statusRecorder struct {
@@ -34,12 +36,23 @@ func LoggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 
 		next.ServeHTTP(recorder, r)
 
-		logger.Info(
-			"http request",
+		attrs := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", recorder.status,
 			"duration_ms", time.Since(start).Milliseconds(),
-		)
+		}
+
+		if tc := tokencount.FromContext(r.Context()); tc != nil && tc.Enabled {
+			attrs = append(attrs,
+				"provider", tc.ProviderName,
+				"model", tc.Model,
+				"prompt_tokens", tc.Counts.PromptTokens,
+				"completion_tokens", tc.Counts.CompletionTokens,
+				"total_tokens", tc.Counts.TotalTokens,
+			)
+		}
+
+		logger.Info("http request", attrs...)
 	})
 }
