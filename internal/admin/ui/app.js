@@ -83,6 +83,10 @@ createApp({
         { label: "force on", value: "true" },
         { label: "force off", value: "false" },
       ],
+      snippetDialog: {
+        visible: false,
+        provider: null,
+      },
     };
   },
 
@@ -188,6 +192,11 @@ createApp({
       } catch (_) {
         ElMessage.warning("无法访问剪贴板，请手动选择复制");
       }
+    },
+
+    openSnippet(row) {
+      this.snippetDialog.provider = row;
+      this.snippetDialog.visible = true;
     },
 
     tokenCountingType(value) {

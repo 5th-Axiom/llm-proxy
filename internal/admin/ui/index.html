@@ -96,22 +96,6 @@
           class="data-table"
           empty-text="暂无 provider"
         >
-          <el-table-column type="expand" width="40">
-            <template #default="{ row }">
-              <div class="snippet-block">
-                <div class="snippet-head">
-                  <div>
-                    <p class="section-kicker">Quick call</p>
-                    <h4>{{ snippetTitle(row) }}</h4>
-                    <p class="soft-meta">复制这段 curl，替换 <code class="inline-code">&lt;PROXY_TOKEN&gt;</code> 和 <code class="inline-code">&lt;MODEL&gt;</code> 即可打一次真实调用。</p>
-                  </div>
-                  <el-button plain @click="copySnippet(row)">复制</el-button>
-                </div>
-                <pre class="snippet">{{ buildCurl(row) }}</pre>
-              </div>
-            </template>
-          </el-table-column>
-
           <el-table-column label="Provider" min-width="220">
             <template #default="{ row }">
               <div class="table-primary">{{ row.name }}</div>
@@ -151,9 +135,10 @@
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="170" align="right" fixed="right">
+          <el-table-column label="操作" width="240" align="right" fixed="right">
             <template #default="{ row }">
               <div class="row-actions">
+                <el-button size="small" @click="openSnippet(row)">示例</el-button>
                 <el-button size="small" @click="openEdit(row)">编辑</el-button>
                 <el-button size="small" type="danger" plain @click="removeProvider(row)">删除</el-button>
               </div>
@@ -246,6 +231,26 @@
       </div>
       <div v-if="editor.error" class="form-error">{{ editor.error }}</div>
     </template>
+  </el-dialog>
+
+  <el-dialog
+    v-model="snippetDialog.visible"
+    :title="snippetDialog.provider ? snippetTitle(snippetDialog.provider) : '示例调用'"
+    width="min(720px, calc(100vw - 24px))"
+    destroy-on-close
+  >
+    <p class="section-copy">
+      复制这段 curl，替换 <code class="inline-code">&lt;PROXY_TOKEN&gt;</code>（Users 页发的 key）和 <code class="inline-code">&lt;MODEL&gt;</code> 就能打一次真实调用。
+    </p>
+    <pre v-if="snippetDialog.provider" class="snippet">{{ buildCurl(snippetDialog.provider) }}</pre>
+    <div class="editor-actions">
+      <el-button @click="snippetDialog.visible = false">关闭</el-button>
+      <el-button
+        v-if="snippetDialog.provider"
+        type="primary"
+        @click="copySnippet(snippetDialog.provider)"
+      >复制到剪贴板</el-button>
+    </div>
   </el-dialog>
 </div>
 

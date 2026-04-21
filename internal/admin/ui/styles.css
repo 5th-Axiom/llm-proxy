@@ -627,23 +627,6 @@ a {
   font-size: 18px;
 }
 
-.snippet-block {
-  padding: 4px 10px 2px 10px;
-}
-
-.snippet-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 10px;
-}
-
-.snippet-head h4 {
-  margin: 2px 0 4px 0;
-  font-size: 15px;
-}
-
 .snippet {
   margin: 0;
   padding: 14px 16px;
