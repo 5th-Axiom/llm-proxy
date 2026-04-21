@@ -73,9 +73,10 @@ func EstimateCompletionTokens(providerType, model string, text string) int {
 }
 
 func providerFromProviderType(providerType, model string) provider {
-	// Model name takes precedence (e.g. claude via openai-compatible endpoint)
-	if p := providerFromModel(model); p != providerOpenAI || providerType != "openai" {
-		return p
+	// Model name takes precedence so a Claude model routed through an
+	// OpenAI-compatible endpoint still uses Claude multipliers.
+	if model != "" {
+		return providerFromModel(model)
 	}
 	if providerType == "anthropic" {
 		return providerClaude
