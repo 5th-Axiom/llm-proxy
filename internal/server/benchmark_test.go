@@ -1,10 +1,12 @@
 package server
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,12 +21,12 @@ func BenchmarkOpenAIProxyRoundTrip(b *testing.B) {
 	}))
 	defer upstream.Close()
 
-	handler := benchmarkHandler(b, upstream.URL)
+	handler, token := benchmarkHandler(b, upstream.URL)
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1-mini"}`))
-		req.Header.Set("Authorization", "Bearer proxy-token")
+		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 
 		rec := httptest.NewRecorder()
@@ -36,14 +38,17 @@ func BenchmarkOpenAIProxyRoundTrip(b *testing.B) {
 	}
 }
 
-func benchmarkHandler(b *testing.B, upstreamBaseURL string) http.Handler {
+func benchmarkHandler(b *testing.B, upstreamBaseURL string) (http.Handler, string) {
 	b.Helper()
 
 	cfg := config.Config{
 		Server: config.ServerConfig{
 			Listen:        ":8080",
 			MetricsListen: "127.0.0.1:0",
-			Tokens:        []string{"proxy-token"},
+		},
+		Storage: config.StorageConfig{
+			SQLitePath:         filepath.Join(b.TempDir(), "bench.db"),
+			UsageRetentionDays: 90,
 		},
 		Providers: []config.ProviderConfig{
 			{
@@ -60,5 +65,15 @@ func benchmarkHandler(b *testing.B, upstreamBaseURL string) http.Handler {
 	if err != nil {
 		b.Fatalf("BuildHandlers() error = %v", err)
 	}
-	return handlers.Public
+
+	st := handlers.Container.Store()
+	user, err := st.CreateUser(context.Background(), "bench-user", "")
+	if err != nil {
+		b.Fatalf("CreateUser: %v", err)
+	}
+	issued, err := st.IssueKey(context.Background(), user.ID, "bench")
+	if err != nil {
+		b.Fatalf("IssueKey: %v", err)
+	}
+	return handlers.Public, issued.Token
 }

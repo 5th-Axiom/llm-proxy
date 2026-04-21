@@ -57,11 +57,14 @@ providers:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+	cfg.Storage.SQLitePath = filepath.Join(dir, "test.db")
 	handlers, err := server.BuildHandlers(context.Background(), cfg, configPath,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("BuildHandlers: %v", err)
 	}
+
+	token := provisionAPIKey(t, handlers)
 
 	proxyTS := httptest.NewServer(handlers.Public)
 	defer proxyTS.Close()
@@ -69,12 +72,12 @@ providers:
 	defer adminTS.Close()
 
 	// 1. Initial provider works.
-	if body := curl(t, proxyTS.URL+"/alpha/v1/anything", "proxy-token"); !strings.Contains(body, `"upstream":"A"`) {
+	if body := curl(t, proxyTS.URL+"/alpha/v1/anything", token); !strings.Contains(body, `"upstream":"A"`) {
 		t.Fatalf("alpha before create: want upstream A, got %q", body)
 	}
 
 	// 2. Unknown provider 404s.
-	if code := curlStatus(t, proxyTS.URL+"/beta/v1/anything", "proxy-token"); code != http.StatusNotFound {
+	if code := curlStatus(t, proxyTS.URL+"/beta/v1/anything", token); code != http.StatusNotFound {
 		t.Fatalf("beta pre-create status = %d, want 404", code)
 	}
 
@@ -85,7 +88,7 @@ providers:
 	postJSON(t, adminTS.URL+"/api/providers", createBody, http.StatusCreated)
 
 	// 4. Hot-reload: the proxy now routes /beta without restarting.
-	if body := curl(t, proxyTS.URL+"/beta/v1/anything", "proxy-token"); !strings.Contains(body, `"upstream":"B"`) {
+	if body := curl(t, proxyTS.URL+"/beta/v1/anything", token); !strings.Contains(body, `"upstream":"B"`) {
 		t.Fatalf("beta after create: want upstream B, got %q", body)
 	}
 
@@ -95,10 +98,10 @@ providers:
 	                "upstream_api_key":""}`
 	putJSON(t, adminTS.URL+"/api/providers/beta", updateBody, http.StatusOK)
 
-	if code := curlStatus(t, proxyTS.URL+"/beta/v1/anything", "proxy-token"); code != http.StatusNotFound {
+	if code := curlStatus(t, proxyTS.URL+"/beta/v1/anything", token); code != http.StatusNotFound {
 		t.Fatalf("old /beta after rename status = %d, want 404", code)
 	}
-	if body := curl(t, proxyTS.URL+"/bravo/v1/anything", "proxy-token"); !strings.Contains(body, `"upstream":"B"`) {
+	if body := curl(t, proxyTS.URL+"/bravo/v1/anything", token); !strings.Contains(body, `"upstream":"B"`) {
 		t.Fatalf("renamed /bravo: want upstream B, got %q", body)
 	}
 
@@ -110,7 +113,7 @@ providers:
 
 	// 7. Deleting alpha removes it.
 	deleteReq(t, adminTS.URL+"/api/providers/alpha")
-	if code := curlStatus(t, proxyTS.URL+"/alpha/v1/anything", "proxy-token"); code != http.StatusNotFound {
+	if code := curlStatus(t, proxyTS.URL+"/alpha/v1/anything", token); code != http.StatusNotFound {
 		t.Fatalf("alpha after delete status = %d, want 404", code)
 	}
 
@@ -196,7 +199,6 @@ func bootstrapEmpty(t *testing.T) (server.Handlers, string) {
 server:
   listen: ":0"
   metrics_listen: "127.0.0.1:0"
-  tokens: ["proxy-token"]
 providers:
   - name: "placeholder"
     type: "openai"
@@ -211,12 +213,29 @@ providers:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+	cfg.Storage.SQLitePath = filepath.Join(dir, "test.db")
 	handlers, err := server.BuildHandlers(context.Background(), cfg, configPath,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("BuildHandlers: %v", err)
 	}
 	return handlers, configPath
+}
+
+// provisionAPIKey creates a user + key in the store that tests can use to
+// authenticate against the proxy. Returns the plaintext token.
+func provisionAPIKey(t *testing.T, handlers server.Handlers) string {
+	t.Helper()
+	st := handlers.Container.Store()
+	user, err := st.CreateUser(context.Background(), "test-user", "")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	issued, err := st.IssueKey(context.Background(), user.ID, "default")
+	if err != nil {
+		t.Fatalf("IssueKey: %v", err)
+	}
+	return issued.Token
 }
 
 func curl(t *testing.T, url, token string) string {

@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +43,7 @@ func TestHandlerProxiesOpenAIRequests(t *testing.T) {
 	handler := testHandler(t, upstream.URL)
 
 	req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1"}`))
-	req.Header.Set("Authorization", "Bearer proxy-token")
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("TEST_PROXY_TOKEN"))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -91,7 +93,7 @@ func TestHandlerForwardsUserAgentWithoutProxyHeaders(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "https://client.example/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1"}`))
 	req.RemoteAddr = "203.0.113.10:4321"
-	req.Header.Set("Authorization", "Bearer proxy-token")
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("TEST_PROXY_TOKEN"))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "MyClient/1.0")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
@@ -126,7 +128,7 @@ func TestHandlerProxiesAnthropicRequests(t *testing.T) {
 	handler := testHandler(t, upstream.URL)
 
 	req := httptest.NewRequest(http.MethodPost, "/anthropic/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5"}`))
-	req.Header.Set("x-api-key", "proxy-token")
+	req.Header.Set("x-api-key", os.Getenv("TEST_PROXY_TOKEN"))
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("Content-Type", "application/json")
 
@@ -155,7 +157,7 @@ func TestHandlerProxiesModelsRequests(t *testing.T) {
 	handler := testHandler(t, upstream.URL)
 
 	req := httptest.NewRequest(http.MethodGet, "/openai/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer proxy-token")
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("TEST_PROXY_TOKEN"))
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -192,7 +194,7 @@ func TestHandlerSupportsMultipleOpenAICompatibleProviders(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/glm/v1/chat/completions", strings.NewReader(`{"model":"glm-4-flash"}`))
-	req.Header.Set("Authorization", "Bearer proxy-token")
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("TEST_PROXY_TOKEN"))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -231,7 +233,7 @@ func TestHandlerStreamsWithoutWaitingForFullResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("http.NewRequest() error = %v", err)
 	}
-	req.Header.Set("Authorization", "Bearer proxy-token")
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("TEST_PROXY_TOKEN"))
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Content-Type", "application/json")
 
@@ -276,7 +278,7 @@ func TestHandlerExposesBasicMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("http.NewRequest() error = %v", err)
 	}
-	req.Header.Set("Authorization", "Bearer proxy-token")
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("TEST_PROXY_TOKEN"))
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 2 * time.Second}
@@ -310,6 +312,10 @@ func TestHandlerExposesBasicMetrics(t *testing.T) {
 	}
 }
 
+// testHandler + helpers now provision a real store, create a user, and issue
+// a key. Tests receive the plaintext token via the context set by t.Setenv
+// on "TEST_PROXY_TOKEN" for minimal churn — each individual test reads
+// os.Getenv("TEST_PROXY_TOKEN") and uses it as the Bearer value.
 func testHandler(t *testing.T, upstreamBaseURL string) http.Handler {
 	t.Helper()
 	return testHandlers(t, upstreamBaseURL).Public
@@ -348,14 +354,32 @@ func testHandlersWithProviders(t *testing.T, providers []config.ProviderConfig) 
 		Server: config.ServerConfig{
 			Listen:        ":8080",
 			MetricsListen: "127.0.0.1:0",
-			Tokens:        []string{"proxy-token"},
+		},
+		Storage: config.StorageConfig{
+			SQLitePath:         filepath.Join(t.TempDir(), "test.db"),
+			UsageRetentionDays: 90,
 		},
 		Providers: providers,
 	}
 
-	handlers, err := BuildHandlers(context.Background(), cfg, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handlers, err := BuildHandlers(context.Background(), cfg, "",
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("BuildHandlers() error = %v", err)
 	}
+
+	// Provision a user + key for the tests below. Exposed via env var so
+	// existing test call sites can keep their Bearer-header shape.
+	st := handlers.Container.Store()
+	user, err := st.CreateUser(context.Background(), "test-user", "")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	issued, err := st.IssueKey(context.Background(), user.ID, "default")
+	if err != nil {
+		t.Fatalf("IssueKey: %v", err)
+	}
+	t.Setenv("TEST_PROXY_TOKEN", issued.Token)
+
 	return handlers
 }

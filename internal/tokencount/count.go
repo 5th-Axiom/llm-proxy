@@ -14,7 +14,9 @@ type TokenCounts struct {
 	OutputEstimated  bool `json:"output_estimated"`
 }
 
-// TokenContext holds per-request token counting state.
+// TokenContext holds per-request token counting state. UserID and KeyID are
+// populated by the auth middleware so downstream observers (metrics, log
+// lines, persistent usage records) can attribute work to a specific tenant.
 type TokenContext struct {
 	ProviderName string
 	ProviderType string // "openai" or "anthropic"
@@ -22,6 +24,8 @@ type TokenContext struct {
 	Counts       TokenCounts
 	Parser       *StreamingUsageParser
 	Enabled      bool
+	UserID       int64
+	KeyID        int64
 }
 
 type ctxKey struct{}
