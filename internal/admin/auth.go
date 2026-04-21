@@ -75,6 +75,13 @@ func isPublicAdminPath(p string) bool {
 	case "/ui/login.html", "/ui/login.js", "/ui/styles.css":
 		return true
 	}
+	// The login form itself is a Vue + ElementPlus app, so the vendored
+	// framework bundles have to be reachable before login. The content
+	// here is off-the-shelf library code (see internal/admin/ui/vendor/),
+	// nothing sensitive lives in this tree.
+	if strings.HasPrefix(p, "/ui/vendor/") {
+		return true
+	}
 	return false
 }
 
