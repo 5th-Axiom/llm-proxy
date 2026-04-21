@@ -1,21 +1,76 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>llm-proxy · 登录</title>
+<link rel="stylesheet" href="vendor/element-plus.css" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body class="login-body">
-<main class="login-main">
-  <h1>llm-proxy</h1>
-  <form id="login-form">
-    <label>password
-      <input type="password" name="password" autofocus required />
-    </label>
-    <button type="submit">登录</button>
-    <div id="login-error" class="error"></div>
-  </form>
-</main>
+<div id="app" v-cloak class="login-shell">
+  <section class="login-hero">
+    <p class="section-kicker">Secure Access</p>
+    <h1>llm-proxy 管理台</h1>
+    <p class="section-copy">用更现代的方式管理 provider 与查看 metrics，让配置维护和运行观察都更顺手。</p>
+
+    <div class="feature-list">
+      <div class="feature-item">
+        <strong>Provider 管理</strong>
+        <span>增删改 provider 后立即热加载。</span>
+      </div>
+      <div class="feature-item">
+        <strong>运行观测</strong>
+        <span>快速查看请求量、状态码和 token 使用。</span>
+      </div>
+      <div class="feature-item">
+        <strong>安全入口</strong>
+        <span>通过登录态保护管理和监控页面。</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="login-panel">
+    <el-card shadow="never" class="login-card">
+      <template #header>
+        <div>
+          <p class="section-kicker">Sign In</p>
+          <h2>输入管理密码</h2>
+        </div>
+      </template>
+
+      <p class="login-hint">登录后即可进入 Providers 和 Metrics 页面。</p>
+
+      <el-alert
+        v-if="error"
+        :title="error"
+        type="error"
+        show-icon
+        :closable="false"
+        class="inline-alert"
+      ></el-alert>
+
+      <el-form @submit.prevent>
+        <el-form-item label="Password">
+          <el-input
+            v-model="password"
+            type="password"
+            show-password
+            placeholder="输入密码"
+            @keyup.enter="login"
+          ></el-input>
+        </el-form-item>
+
+        <el-button type="primary" size="large" class="login-submit" :loading="loading" @click="login">
+          进入控制台
+        </el-button>
+      </el-form>
+    </el-card>
+  </section>
+</div>
+
+<script src="vendor/vue.global.prod.js"></script>
+<script src="vendor/element-plus.full.min.js"></script>
 <script src="login.js"></script>
 </body>
 </html>

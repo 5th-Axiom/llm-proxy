@@ -1,112 +1,146 @@
 "use strict";
 
-async function fetchMetrics() {
-  const [json, prom] = await Promise.all([
-    apiFetch("/metrics").then((r) => r.json()),
-    apiFetch("/metrics?format=prometheus").then((r) => r.text()),
-  ]);
-  return { json, prom };
+const { createApp } = Vue;
+
+function formatInt(value) {
+  return Number(value || 0).toLocaleString("en-US");
 }
 
-function render(data) {
-  const { json, prom } = data;
+createApp({
+  data() {
+    return {
+      authEnabled: false,
+      loading: false,
+      loadError: "",
+      autoRefresh: true,
+      timer: null,
+      lastUpdatedText: "--:--:--",
+      rawProm: "",
+      overviewCards: [],
+      statusRows: [],
+      tokenRows: [],
+    };
+  },
 
-  document.getElementById("last-updated").textContent =
-    new Date().toLocaleTimeString();
+  watch: {
+    autoRefresh(enabled) {
+      if (enabled) this.startAuto();
+      else this.stopAuto();
+    },
+  },
 
-  const tokenUsage = json.token_usage_by_provider || {};
-  let totalPrompt = 0;
-  let totalCompletion = 0;
-  const tokenRows = [];
-  for (const [provider, usage] of Object.entries(tokenUsage)) {
-    const p = Number(usage.prompt_tokens || 0);
-    const c = Number(usage.completion_tokens || 0);
-    totalPrompt += p;
-    totalCompletion += c;
-    tokenRows.push({ provider, p, c, t: p + c });
-  }
-  tokenRows.sort((a, b) => b.t - a.t);
+  methods: {
+    async initialize() {
+      const auth = await window.adminUtils.fetchAuthStatus().catch(() => ({ enabled: false }));
+      this.authEnabled = !!auth.enabled;
+      await this.refresh();
+      if (this.autoRefresh) this.startAuto();
+    },
 
-  // cards
-  const cards = document.getElementById("cards");
-  cards.innerHTML = "";
-  addCard(cards, "请求总数", formatInt(json.requests_total || 0));
-  addCard(cards, "prompt tokens", formatInt(totalPrompt));
-  addCard(cards, "completion tokens", formatInt(totalCompletion));
+    async fetchMetrics() {
+      const [json, prom] = await Promise.all([
+        apiFetch("/metrics").then((r) => r.json()),
+        apiFetch("/metrics?format=prometheus").then((r) => r.text()),
+      ]);
+      return { json, prom };
+    },
 
-  // status table
-  const statuses = json.responses_by_status || {};
-  const stBody = document.querySelector("#status-table tbody");
-  stBody.innerHTML = "";
-  const statusKeys = Object.keys(statuses).sort();
-  if (statusKeys.length === 0) {
-    stBody.innerHTML = `<tr><td colspan="2" class="summary">暂无数据</td></tr>`;
-  } else {
-    for (const k of statusKeys) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td><code>${escHTML(k)}</code></td><td>${formatInt(statuses[k])}</td>`;
-      stBody.appendChild(tr);
-    }
-  }
+    buildRows(json, prom) {
+      const tokenUsage = json.token_usage_by_provider || {};
+      const tokenRows = [];
+      let totalPrompt = 0;
+      let totalCompletion = 0;
 
-  // token table
-  const tBody = document.querySelector("#token-table tbody");
-  tBody.innerHTML = "";
-  const empty = document.getElementById("token-empty");
-  if (tokenRows.length === 0) {
-    empty.hidden = false;
-  } else {
-    empty.hidden = true;
-    for (const row of tokenRows) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${escHTML(row.provider)}</td>
-        <td>${formatInt(row.p)}</td>
-        <td>${formatInt(row.c)}</td>
-        <td>${formatInt(row.t)}</td>`;
-      tBody.appendChild(tr);
-    }
-  }
+      for (const [provider, usage] of Object.entries(tokenUsage)) {
+        const prompt = Number(usage.prompt_tokens || 0);
+        const completion = Number(usage.completion_tokens || 0);
+        const total = prompt + completion;
+        totalPrompt += prompt;
+        totalCompletion += completion;
+        tokenRows.push({
+          provider,
+          prompt: formatInt(prompt),
+          completion: formatInt(completion),
+          total: formatInt(total),
+          totalValue: total,
+        });
+      }
+      tokenRows.sort((a, b) => b.totalValue - a.totalValue);
 
-  document.getElementById("raw-prom").textContent = prom;
-}
+      const statuses = json.responses_by_status || {};
+      const statusRows = Object.keys(statuses).sort().map((status) => ({
+        status,
+        count: formatInt(statuses[status]),
+        tagType: this.statusTagType(status),
+      }));
 
-function addCard(parent, label, value) {
-  const d = document.createElement("div");
-  d.className = "card";
-  d.innerHTML = `<div class="card-value">${escHTML(value)}</div><div class="card-label">${escHTML(label)}</div>`;
-  parent.appendChild(d);
-}
+      let successCount = 0;
+      let errorCount = 0;
+      for (const [status, count] of Object.entries(statuses)) {
+        const code = Number(status);
+        const numericCount = Number(count || 0);
+        if (!Number.isNaN(code) && code >= 200 && code < 300) successCount += numericCount;
+        if (!Number.isNaN(code) && code >= 400) errorCount += numericCount;
+      }
 
-function formatInt(n) {
-  return Number(n).toLocaleString("en-US");
-}
+      this.overviewCards = [
+        { label: "请求总数", value: formatInt(json.requests_total || 0), meta: `2xx 成功 ${formatInt(successCount)}` },
+        { label: "Prompt Tokens", value: formatInt(totalPrompt), meta: `已追踪 provider ${formatInt(tokenRows.length)}` },
+        { label: "Completion Tokens", value: formatInt(totalCompletion), meta: `错误响应 ${formatInt(errorCount)}` },
+        { label: "Total Tokens", value: formatInt(totalPrompt + totalCompletion), meta: "近实时聚合" },
+      ];
+      this.statusRows = statusRows;
+      this.tokenRows = tokenRows;
+      this.rawProm = prom;
+    },
 
-let timer = null;
-function startAuto() {
-  stopAuto();
-  timer = setInterval(refresh, 3000);
-}
-function stopAuto() {
-  if (timer != null) {
-    clearInterval(timer);
-    timer = null;
-  }
-}
+    statusTagType(status) {
+      const code = Number(status);
+      if (Number.isNaN(code)) return "info";
+      if (code >= 200 && code < 300) return "success";
+      if (code >= 300 && code < 400) return "warning";
+      if (code >= 400) return "danger";
+      return "info";
+    },
 
-async function refresh() {
-  try {
-    render(await fetchMetrics());
-  } catch (e) {
-    // best-effort UI; an unauthorized response already redirected us
-  }
-}
+    async refresh() {
+      this.loading = true;
+      this.loadError = "";
+      try {
+        const { json, prom } = await this.fetchMetrics();
+        this.buildRows(json, prom);
+        this.lastUpdatedText = new Date().toLocaleTimeString();
+      } catch (err) {
+        this.loadError = String(err.message || err);
+      } finally {
+        this.loading = false;
+      }
+    },
 
-document.getElementById("auto").addEventListener("change", (e) => {
-  if (e.target.checked) startAuto();
-  else stopAuto();
-});
+    startAuto() {
+      this.stopAuto();
+      this.timer = setInterval(() => {
+        this.refresh();
+      }, 3000);
+    },
 
-refresh().then(() => {
-  if (document.getElementById("auto").checked) startAuto();
-});
+    stopAuto() {
+      if (this.timer != null) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+    },
+
+    async logout() {
+      await window.adminUtils.logout();
+    },
+  },
+
+  mounted() {
+    this.initialize();
+  },
+
+  beforeUnmount() {
+    this.stopAuto();
+  },
+}).use(ElementPlus).mount("#app");
