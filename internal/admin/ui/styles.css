@@ -627,6 +627,14 @@ a {
   font-size: 18px;
 }
 
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
 .token-reveal {
   margin: 14px 0 18px 0;
   padding: 14px 16px;

@@ -80,7 +80,7 @@ func BuildHandlers(ctx context.Context, cfg config.Config, configPath string, lo
 
 	metrics := observability.NewMetrics()
 	usage := observability.NewUsageRecorder(st, logger)
-	observability.StartUsageRetention(ctx, st, resolved.Storage.UsageRetentionDays, logger)
+	observability.StartUsageRetention(ctx, container, logger)
 	proxyHandler := router.New(container, logger)
 	proxyHandler = usage.Middleware(proxyHandler)
 	proxyHandler = metrics.Middleware(proxyHandler)
@@ -95,10 +95,7 @@ func BuildHandlers(ctx context.Context, cfg config.Config, configPath string, lo
 	publicMux.Handle("/", proxyHandler)
 
 	adminHandler := admin.NewHandler(container, configPath, logger, admin.Options{
-		PasswordHash:       cfg.Admin.PasswordHash,
-		SessionTTLMin:      cfg.Admin.SessionTTLMin,
-		MetricsBearerToken: cfg.Admin.MetricsBearerToken,
-		Metrics:            metrics.Handler(),
+		Metrics: metrics.Handler(),
 	})
 
 	return Handlers{

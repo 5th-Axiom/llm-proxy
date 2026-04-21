@@ -45,7 +45,8 @@ func (h *Handler) requireAuth(next http.Handler) http.Handler {
 }
 
 func (h *Handler) metricsBearerAccepted(r *http.Request) bool {
-	if h.metricsBearerToken == "" {
+	configured := h.metricsBearerToken()
+	if configured == "" {
 		return false
 	}
 	header := r.Header.Get("Authorization")
@@ -54,11 +55,11 @@ func (h *Handler) metricsBearerAccepted(r *http.Request) bool {
 		return false
 	}
 	got := strings.TrimSpace(header[len(prefix):])
-	return subtle.ConstantTimeCompare([]byte(got), []byte(h.metricsBearerToken)) == 1
+	return subtle.ConstantTimeCompare([]byte(got), []byte(configured)) == 1
 }
 
 func (h *Handler) authEnabled() bool {
-	return h.passwordHash != ""
+	return h.passwordHash() != ""
 }
 
 // isAPIPath identifies requests that should get a 401 (rather than a login
@@ -107,19 +108,20 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if !VerifyPassword(h.passwordHash, body.Password) {
+	if !VerifyPassword(h.passwordHash(), body.Password) {
 		time.Sleep(150 * time.Millisecond)
 		http.Error(w, "invalid password", http.StatusUnauthorized)
 		return
 	}
-	token := h.sessions.Create()
+	ttl := h.sessionTTL()
+	token := h.sessions.Create(ttl)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int(h.sessions.ttl.Seconds()),
+		MaxAge:   int(ttl.Seconds()),
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
