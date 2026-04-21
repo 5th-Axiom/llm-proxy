@@ -33,6 +33,9 @@
   - REST API：`GET/POST/PUT/DELETE /api/providers[/:name]`、`GET /api/config`、`GET /metrics`
   - 可选密码登录：在 `admin.password_hash` 填入 `./llm-proxy -hash-password` 生成的哈希，开启 session cookie 鉴权；未设置则保持开放（适合纯 loopback 场景）
   - 写回 YAML 时保留 `${ENV_VAR}` 占位符，不会把上游 key 明文落盘
+- Prometheus 外挂：
+  - 配置 `admin.metrics_bearer_token` 后，scraper 可用 `Authorization: Bearer <token>` 绕开 session cookie 抓 `/metrics?format=prometheus`
+  - `deploy/docker-compose.yml` 提供一套 Prometheus + Grafana（含预置 dashboard）的 loopback 栈，详见 `deploy/README.md`
 
 ## 设计原则
 
