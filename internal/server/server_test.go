@@ -353,7 +353,7 @@ func testHandlersWithProviders(t *testing.T, providers []config.ProviderConfig) 
 		Providers: providers,
 	}
 
-	handlers, err := BuildHandlers(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handlers, err := BuildHandlers(context.Background(), cfg, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("BuildHandlers() error = %v", err)
 	}

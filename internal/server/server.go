@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	"llm-proxy/internal/auth"
+	"llm-proxy/internal/admin"
+	"llm-proxy/internal/appstate"
 	"llm-proxy/internal/config"
 	"llm-proxy/internal/observability"
-	"llm-proxy/internal/providers"
 	"llm-proxy/internal/proxy"
 	"llm-proxy/internal/router"
 	"llm-proxy/internal/tokencount"
@@ -18,30 +18,35 @@ import (
 
 // Handlers bundles the two HTTP entry points the proxy exposes. Public serves
 // the proxy routes (and /healthz) on the user-facing listener; Admin serves
-// /metrics on a separate — typically loopback — listener to avoid exposing
-// provider names and token usage to the public network.
+// /metrics, the management REST API, and the embedded UI on a separate —
+// typically loopback — listener.
 type Handlers struct {
-	Public http.Handler
-	Admin  http.Handler
+	Public    http.Handler
+	Admin     http.Handler
+	Container *appstate.Container
 }
 
-func BuildHandlers(_ context.Context, cfg config.Config, logger *slog.Logger) (Handlers, error) {
+// BuildHandlers constructs the proxy and admin handlers plus the shared
+// AppState container. The container is populated with the initial AppState
+// derived from cfg; admin mutations will swap in new AppStates in place.
+//
+// configPath may be empty, in which case the admin UI and API are still
+// served but mutations that try to persist will fail — useful for tests that
+// don't care about on-disk state.
+func BuildHandlers(_ context.Context, cfg config.Config, configPath string, logger *slog.Logger) (Handlers, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	registry, err := providers.NewRegistry(cfg.Providers)
-	if err != nil {
-		return Handlers{}, err
-	}
+	resolved := cfg.Resolved()
 
-	authenticator := auth.New(cfg.Server.Tokens)
-	client := proxy.NewHTTPClient(cfg.Transport)
-
-	tokenCountingEnabled := cfg.TokenCounting.Enabled
+	// tiktoken state is a package-level cache so it's safe to initialise
+	// once here; it's keyed by model name, not config state, and Reload
+	// does not need to re-run it.
+	tokenCountingEnabled := resolved.TokenCounting.Enabled
 	if !tokenCountingEnabled {
-		for _, p := range cfg.Providers {
-			if p.IsTokenCountingEnabled(cfg.TokenCounting) {
+		for _, p := range resolved.Providers {
+			if p.IsTokenCountingEnabled(resolved.TokenCounting) {
 				tokenCountingEnabled = true
 				break
 			}
@@ -53,9 +58,14 @@ func BuildHandlers(_ context.Context, cfg config.Config, logger *slog.Logger) (H
 		}
 	}
 
-	forwarder := proxy.NewForwarder(client, cfg.TokenCounting)
+	client := proxy.NewHTTPClient(resolved.Transport)
+	container := appstate.NewContainer(client)
+	if err := container.Install(cfg); err != nil {
+		return Handlers{}, err
+	}
+
 	metrics := observability.NewMetrics()
-	proxyHandler := router.New(registry, authenticator, forwarder, logger)
+	proxyHandler := router.New(container, logger)
 	proxyHandler = metrics.Middleware(proxyHandler)
 	proxyHandler = observability.LoggingMiddleware(logger, proxyHandler)
 	proxyHandler = observability.TokenContextMiddleware(proxyHandler)
@@ -69,24 +79,25 @@ func BuildHandlers(_ context.Context, cfg config.Config, logger *slog.Logger) (H
 
 	adminMux := http.NewServeMux()
 	adminMux.Handle("/metrics", metrics.Handler())
+	adminMux.Handle("/", admin.NewHandler(container, configPath, logger))
 
-	return Handlers{Public: publicMux, Admin: adminMux}, nil
+	return Handlers{Public: publicMux, Admin: adminMux, Container: container}, nil
 }
 
 // Service pairs the public-facing proxy server with the loopback-only admin
-// server that hosts /metrics.
+// server that hosts /metrics and the management UI.
 type Service struct {
 	Public *http.Server
 	Admin  *http.Server
 	logger *slog.Logger
 }
 
-func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Service, error) {
+func New(ctx context.Context, cfg config.Config, configPath string, logger *slog.Logger) (*Service, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	handlers, err := BuildHandlers(ctx, cfg, logger)
+	handlers, err := BuildHandlers(ctx, cfg, configPath, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +143,6 @@ func (s *Service) ListenAndServe() error {
 	}()
 
 	first := <-errs
-	// Trigger shutdown on the peer so the process exits instead of the
-	// healthy server soldiering on alone.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = s.Public.Shutdown(shutdownCtx)

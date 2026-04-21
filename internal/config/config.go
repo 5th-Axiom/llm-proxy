@@ -17,6 +17,10 @@ const (
 	ProviderTypeAnthropic ProviderType = "anthropic"
 )
 
+// Config is the raw configuration as stored on disk. String fields may contain
+// ${ENV_VAR} placeholders; call Resolved() to obtain a copy with environment
+// variables expanded for use at request time. Keeping the raw form in memory
+// lets the admin API round-trip the file without losing env-var references.
 type Config struct {
 	Server        ServerConfig        `yaml:"server"`
 	Transport     TransportConfig     `yaml:"transport"`
@@ -47,10 +51,10 @@ type ProviderConfig struct {
 	BasePath        string            `yaml:"base_path"`
 	UpstreamBaseURL string            `yaml:"upstream_base_url"`
 	UpstreamAPIKey  string            `yaml:"upstream_api_key"`
-	UpstreamHeaders map[string]string `yaml:"upstream_headers"`
+	UpstreamHeaders map[string]string `yaml:"upstream_headers,omitempty"`
 	// TokenCounting is a pointer so nil means "inherit global", allowing a
 	// provider to opt out of token counting even when the global default is on.
-	TokenCounting *bool `yaml:"token_counting"`
+	TokenCounting *bool `yaml:"token_counting,omitempty"`
 }
 
 func (p ProviderConfig) IsTokenCountingEnabled(global TokenCountingConfig) bool {
@@ -60,16 +64,17 @@ func (p ProviderConfig) IsTokenCountingEnabled(global TokenCountingConfig) bool 
 	return global.Enabled
 }
 
+// Load reads a YAML config from disk. String values are stored verbatim —
+// ${ENV_VAR} references are preserved so Save can round-trip them. Consumers
+// that need expanded values should call Resolved().
 func Load(path string) (Config, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 
-	expanded := os.ExpandEnv(string(contents))
-
 	var cfg Config
-	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
+	if err := yaml.Unmarshal(contents, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config: %w", err)
 	}
 
@@ -79,6 +84,65 @@ func Load(path string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// Save writes the config back to disk as YAML. Env-var placeholders inside
+// string fields are preserved because Config holds raw strings.
+func Save(path string, cfg Config) error {
+	cfg.applyDefaults()
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	data, err := yaml.Marshal(&cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+
+	// Atomic rename so a crashed write cannot produce a half-written config.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename config: %w", err)
+	}
+	return nil
+}
+
+// Resolved returns a deep copy of the config with ${ENV_VAR} placeholders in
+// string fields expanded via os.ExpandEnv. The original Config is left
+// untouched so subsequent Save writes back the raw form.
+func (c Config) Resolved() Config {
+	out := c
+	out.Server.Tokens = expandAll(c.Server.Tokens)
+
+	out.Providers = make([]ProviderConfig, len(c.Providers))
+	for i, p := range c.Providers {
+		p.UpstreamBaseURL = os.ExpandEnv(p.UpstreamBaseURL)
+		p.UpstreamAPIKey = os.ExpandEnv(p.UpstreamAPIKey)
+		if p.UpstreamHeaders != nil {
+			headers := make(map[string]string, len(p.UpstreamHeaders))
+			for k, v := range p.UpstreamHeaders {
+				headers[k] = os.ExpandEnv(v)
+			}
+			p.UpstreamHeaders = headers
+		}
+		out.Providers[i] = p
+	}
+	return out
+}
+
+func expandAll(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[i] = os.ExpandEnv(v)
+	}
+	return out
 }
 
 func (c *Config) applyDefaults() {
@@ -124,36 +188,43 @@ func (c Config) Validate() error {
 	basePaths := map[string]struct{}{}
 
 	for _, provider := range c.Providers {
-		if strings.TrimSpace(provider.Name) == "" {
-			return errors.New("provider name is required")
+		if err := ValidateProvider(provider); err != nil {
+			return err
 		}
 		if _, exists := names[provider.Name]; exists {
 			return fmt.Errorf("duplicate provider name: %s", provider.Name)
 		}
 		names[provider.Name] = struct{}{}
-
-		switch provider.Type {
-		case ProviderTypeOpenAI, ProviderTypeAnthropic:
-		default:
-			return fmt.Errorf("unsupported provider type: %s", provider.Type)
-		}
-
-		if provider.BasePath == "" || provider.BasePath == "/" {
-			return fmt.Errorf("provider %s base_path must not be empty or root", provider.Name)
-		}
 		if _, exists := basePaths[provider.BasePath]; exists {
 			return fmt.Errorf("duplicate provider base_path: %s", provider.BasePath)
 		}
 		basePaths[provider.BasePath] = struct{}{}
-
-		if strings.TrimSpace(provider.UpstreamBaseURL) == "" {
-			return fmt.Errorf("provider %s upstream_base_url is required", provider.Name)
-		}
-		if strings.TrimSpace(provider.UpstreamAPIKey) == "" {
-			return fmt.Errorf("provider %s upstream_api_key is required", provider.Name)
-		}
 	}
 
+	return nil
+}
+
+// ValidateProvider checks a single provider's required fields. Exposed so the
+// admin API can validate an incoming payload before merging it.
+func ValidateProvider(provider ProviderConfig) error {
+	if strings.TrimSpace(provider.Name) == "" {
+		return errors.New("provider name is required")
+	}
+	switch provider.Type {
+	case ProviderTypeOpenAI, ProviderTypeAnthropic:
+	default:
+		return fmt.Errorf("unsupported provider type: %s", provider.Type)
+	}
+	normalized := normalizeBasePath(provider.BasePath)
+	if normalized == "" || normalized == "/" {
+		return fmt.Errorf("provider %s base_path must not be empty or root", provider.Name)
+	}
+	if strings.TrimSpace(provider.UpstreamBaseURL) == "" {
+		return fmt.Errorf("provider %s upstream_base_url is required", provider.Name)
+	}
+	if strings.TrimSpace(provider.UpstreamAPIKey) == "" {
+		return fmt.Errorf("provider %s upstream_api_key is required", provider.Name)
+	}
 	return nil
 }
 
@@ -169,4 +240,9 @@ func normalizeBasePath(p string) string {
 		cleaned = strings.TrimRight(cleaned, "/")
 	}
 	return cleaned
+}
+
+// NormalizeBasePath is the exported form for admin validation.
+func NormalizeBasePath(p string) string {
+	return normalizeBasePath(p)
 }
