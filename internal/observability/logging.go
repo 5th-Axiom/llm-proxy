@@ -8,6 +8,21 @@ import (
 	"llm-proxy/internal/tokencount"
 )
 
+// TokenContextMiddleware pre-installs an empty TokenContext into the request
+// context so inner handlers (the forwarder) can populate it via pointer and
+// outer middlewares (metrics, logging) can read it after next.ServeHTTP
+// returns. Without this, each middleware has its own r and the forwarder's
+// r.WithContext call is invisible outside its own stack frame.
+//
+// Mount this as the outermost middleware.
+func TokenContextMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tc := &tokencount.TokenContext{}
+		r = r.WithContext(tokencount.WithContext(r.Context(), tc))
+		next.ServeHTTP(w, r)
+	})
+}
+
 type statusRecorder struct {
 	http.ResponseWriter
 	status int

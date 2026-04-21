@@ -23,8 +23,9 @@
   - `Authorization: Bearer <proxy-token>`
   - `x-api-key: <proxy-token>`
 - 基础运维接口：
-  - `GET /healthz`
-  - `GET /metrics`
+  - `GET /healthz`（与代理共用监听地址）
+  - `GET /metrics`（默认监听 `127.0.0.1:8081`，避免在公网暴露 provider 名与 token 计数）
+- 非流式请求默认 60s 上游超时；`Accept: text/event-stream` 或请求体含 `"stream": true` 时不加超时
 
 ## 设计原则
 
@@ -135,4 +136,3 @@ go test ./internal/server -run '^$' -bench . -benchmem
 - provider 级别的访问白名单
 - 动态配置热更新
 - 更完整的模型/接口覆盖
-- Prometheus 指标导出
