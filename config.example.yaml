@@ -3,9 +3,16 @@ server:
   # /metrics and the admin UI live on this loopback listener so provider
   # names and token usage are not exposed on the public listener.
   metrics_listen: "127.0.0.1:8081"
-  tokens:
-    - "proxy-token-1"
-    - "proxy-token-2"
+  # server.tokens is retained for older configs but ignored at runtime —
+  # client tokens are issued per-user via the admin API (see storage.sqlite_path).
+  # tokens: []
+
+# On-disk state for users, API keys, and per-request usage records. A single
+# SQLite file is enough for a single-instance proxy. Adjust usage_retention_days
+# to bound the usage_records table; the default is 90 days.
+storage:
+  sqlite_path: "./llm-proxy.db"
+  usage_retention_days: 90
 
 # Admin auth. Leave password_hash empty to keep the admin UI open (appropriate
 # when the loopback listener is your only trust boundary). To require login,

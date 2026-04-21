@@ -25,6 +25,9 @@ type Handlers struct {
 	Public    http.Handler
 	Admin     http.Handler
 	Container *appstate.Container
+	// Usage exposes the per-request usage writer so callers (tests, a
+	// graceful-shutdown hook) can drain pending inserts before exit.
+	Usage *observability.UsageRecorder
 }
 
 // BuildHandlers constructs the proxy and admin handlers plus the shared
@@ -76,7 +79,10 @@ func BuildHandlers(ctx context.Context, cfg config.Config, configPath string, lo
 	}
 
 	metrics := observability.NewMetrics()
+	usage := observability.NewUsageRecorder(st, logger)
+	observability.StartUsageRetention(ctx, st, resolved.Storage.UsageRetentionDays, logger)
 	proxyHandler := router.New(container, logger)
+	proxyHandler = usage.Middleware(proxyHandler)
 	proxyHandler = metrics.Middleware(proxyHandler)
 	proxyHandler = observability.LoggingMiddleware(logger, proxyHandler)
 	proxyHandler = observability.TokenContextMiddleware(proxyHandler)
@@ -95,7 +101,12 @@ func BuildHandlers(ctx context.Context, cfg config.Config, configPath string, lo
 		Metrics:            metrics.Handler(),
 	})
 
-	return Handlers{Public: publicMux, Admin: adminHandler, Container: container}, nil
+	return Handlers{
+		Public:    publicMux,
+		Admin:     adminHandler,
+		Container: container,
+		Usage:     usage,
+	}, nil
 }
 
 // Service pairs the public-facing proxy server with the loopback-only admin

@@ -22,6 +22,8 @@
 - 代理鉴权支持：
   - `Authorization: Bearer <proxy-token>`
   - `x-api-key: <proxy-token>`
+  - 多租户：每个 user 由 admin 建、各自持有独立 key（`llmp_*`）；token 存 SHA-256 到 SQLite；revoke 即时生效
+  - 按 user + provider 落 `usage_records` 表（支持 per-user token 用量查询），超 `storage.usage_retention_days`（默认 90d）自动清理
 - 基础运维接口：
   - `GET /healthz`（与代理共用监听地址）
   - `GET /metrics`（默认监听 `127.0.0.1:8081`，避免在公网暴露 provider 名与 token 计数）
@@ -30,7 +32,7 @@
   - Web UI：`http://127.0.0.1:8081/ui/`
     - Providers 页：增删改 provider，改完立即热生效，不重启进程
     - Metrics 页：请求数 / 状态分布 / 按 provider 的 token 使用，3s 自动刷新
-  - REST API：`GET/POST/PUT/DELETE /api/providers[/:name]`、`GET /api/config`、`GET /metrics`
+  - REST API：`GET/POST/PUT/DELETE /api/providers[/:name]`、`GET/POST /api/users`、`GET/PATCH/DELETE /api/users/:id`、`GET/POST /api/users/:id/keys`、`DELETE /api/keys/:prefix`、`GET /api/usage/summary?window=7d`、`GET /api/config`、`GET /metrics`
   - 可选密码登录：在 `admin.password_hash` 填入 `./llm-proxy -hash-password` 生成的哈希，开启 session cookie 鉴权；未设置则保持开放（适合纯 loopback 场景）
   - 写回 YAML 时保留 `${ENV_VAR}` 占位符，不会把上游 key 明文落盘
 - Prometheus 外挂：
