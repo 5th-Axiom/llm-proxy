@@ -19,6 +19,10 @@ createApp({
       overviewCards: [],
       statusRows: [],
       tokenRows: [],
+      usageWindow: "7d",
+      usageError: "",
+      usageUserRows: [],
+      usageProviderRows: [],
     };
   },
 
@@ -114,6 +118,36 @@ createApp({
         this.loadError = String(err.message || err);
       } finally {
         this.loading = false;
+      }
+      // Usage summary is paced independently of the Prometheus poll (expensive
+      // aggregation vs. cheap counter scrape) so we refresh it on the same
+      // cadence but don't await failure propagation into the metrics banner.
+      await this.refreshUsage();
+    },
+
+    async refreshUsage() {
+      this.usageError = "";
+      try {
+        const r = await apiFetch(`/api/usage/summary?window=${encodeURIComponent(this.usageWindow)}`);
+        if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+        const summary = await r.json();
+        this.usageUserRows = (summary.users || []).map((u) => ({
+          user_id: u.user_id,
+          user_name: u.user_name,
+          requestsText: formatInt(u.requests),
+          promptText: formatInt(u.prompt_tokens),
+          completionText: formatInt(u.completion_tokens),
+          totalText: formatInt(u.total_tokens),
+        }));
+        this.usageProviderRows = (summary.providers || []).map((p) => ({
+          provider: p.provider,
+          requestsText: formatInt(p.requests),
+          promptText: formatInt(p.prompt_tokens),
+          completionText: formatInt(p.completion_tokens),
+          totalText: formatInt(p.total_tokens),
+        }));
+      } catch (err) {
+        this.usageError = String(err.message || err);
       }
     },
 

@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>llm-proxy · users</title>
+<link rel="stylesheet" href="vendor/element-plus.css" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body class="admin-body">
+<div id="app" v-cloak>
+  <div class="admin-shell">
+    <header class="admin-topbar">
+      <div class="brand-block">
+        <div class="brand-mark">LP</div>
+        <div>
+          <p class="brand-kicker">Admin Console</p>
+          <h1>llm-proxy</h1>
+        </div>
+      </div>
+
+      <nav class="top-nav">
+        <a href="/ui/">Providers</a>
+        <a href="/ui/users.html" class="active">Users</a>
+        <a href="/ui/metrics.html">Metrics</a>
+      </nav>
+
+      <div class="topbar-actions">
+        <div class="summary-grid">
+          <div class="summary-pill">
+            <span>Users</span>
+            <strong>{{ users.length }}</strong>
+          </div>
+          <div class="summary-pill">
+            <span>Active keys</span>
+            <strong>{{ totalActiveKeys }}</strong>
+          </div>
+        </div>
+        <el-button v-if="authEnabled" class="logout-button" plain @click="logout">登出</el-button>
+      </div>
+    </header>
+
+    <main class="page-stack">
+      <section class="hero-section">
+        <div>
+          <p class="section-kicker">Tenants & API Keys</p>
+          <h2>按用户分配 API key，按用户追踪用量</h2>
+          <p class="section-copy">每位使用者由你在这里创建并持有各自的 key；明文只会在签发时展示一次，撤销立即生效。</p>
+        </div>
+        <div class="hero-action">
+          <el-button type="primary" size="large" @click="openCreateUser">新建用户</el-button>
+        </div>
+      </section>
+
+      <el-alert
+        v-if="loadError"
+        :title="loadError"
+        type="error"
+        show-icon
+        :closable="false"
+        class="inline-alert"
+      ></el-alert>
+
+      <el-card shadow="never" class="panel-card">
+        <template #header>
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Users</p>
+              <h3>用户列表</h3>
+            </div>
+            <div class="panel-head-actions">
+              <span class="soft-meta">{{ users.length }} 个用户</span>
+              <el-button plain @click="refresh" :loading="loading">刷新</el-button>
+            </div>
+          </div>
+        </template>
+
+        <el-empty
+          v-if="!loading && users.length === 0"
+          description="还没有用户。创建第一个用户之后可以给 ta 签发 API key。"
+        >
+          <el-button type="primary" @click="openCreateUser">创建第一个用户</el-button>
+        </el-empty>
+
+        <el-table v-else :data="users" stripe class="data-table" empty-text="暂无用户">
+          <el-table-column label="Name" min-width="160">
+            <template #default="{ row }">
+              <div class="table-primary">{{ row.name }}</div>
+              <div class="table-secondary">ID {{ row.id }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="email" label="Email" min-width="200">
+            <template #default="{ row }">
+              <span v-if="row.email">{{ row.email }}</span>
+              <span v-else class="table-secondary">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="Keys" width="100">
+            <template #default="{ row }">
+              <el-tag round>{{ row.key_count }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="Status" width="120">
+            <template #default="{ row }">
+              <el-tag v-if="row.disabled_at" type="danger" round>disabled</el-tag>
+              <el-tag v-else type="success" round>active</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="Created" min-width="170">
+            <template #default="{ row }">
+              <span class="soft-meta">{{ formatDateTime(row.created_at) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="280" align="right" fixed="right">
+            <template #default="{ row }">
+              <div class="row-actions">
+                <el-button size="small" @click="openKeysDrawer(row)">Keys</el-button>
+                <el-button size="small" @click="openEditUser(row)">编辑</el-button>
+                <el-button
+                  v-if="!row.disabled_at"
+                  size="small"
+                  type="danger"
+                  plain
+                  @click="disableUser(row)"
+                >禁用</el-button>
+                <el-button
+                  v-else
+                  size="small"
+                  type="success"
+                  plain
+                  @click="enableUser(row)"
+                >恢复</el-button>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </main>
+  </div>
+
+  <!-- Create / Edit user dialog -->
+  <el-dialog
+    v-model="userDialog.visible"
+    :title="userDialog.mode === 'create' ? '新建用户' : '编辑用户'"
+    width="min(520px, calc(100vw - 24px))"
+    destroy-on-close
+  >
+    <el-form label-position="top" class="provider-form">
+      <el-form-item label="Name" required>
+        <el-input v-model.trim="userDialog.form.name" placeholder="alice"></el-input>
+      </el-form-item>
+      <el-form-item label="Email">
+        <el-input v-model.trim="userDialog.form.email" placeholder="可选，仅作展示"></el-input>
+      </el-form-item>
+    </el-form>
+    <div class="editor-actions">
+      <el-button @click="userDialog.visible = false">取消</el-button>
+      <el-button type="primary" @click="saveUser" :loading="userDialog.saving">保存</el-button>
+    </div>
+    <el-alert
+      v-if="userDialog.error"
+      :title="userDialog.error"
+      type="error"
+      show-icon
+      :closable="false"
+      class="inline-alert"
+    ></el-alert>
+  </el-dialog>
+
+  <!-- Keys drawer -->
+  <el-drawer
+    v-model="keysDrawer.visible"
+    direction="rtl"
+    size="min(640px, 100vw)"
+    :title="keysDrawer.user ? `${keysDrawer.user.name} · API Keys` : 'API Keys'"
+    destroy-on-close
+  >
+    <div v-if="keysDrawer.user" class="keys-drawer-body">
+      <div class="drawer-head-row">
+        <div>
+          <p class="section-kicker">Issued Keys</p>
+          <h3>该用户的 API key 列表</h3>
+          <p class="section-copy soft-meta">明文只在签发时展示一次；上线后请轮换而不是恢复。</p>
+        </div>
+        <el-button type="primary" @click="openIssueKey">签发新 key</el-button>
+      </div>
+
+      <el-empty
+        v-if="!keysDrawer.loading && keysDrawer.keys.length === 0"
+        description="这个用户还没有 key"
+      ></el-empty>
+
+      <el-table v-else :data="keysDrawer.keys" stripe class="data-table" empty-text="暂无 key">
+        <el-table-column label="Name" min-width="120">
+          <template #default="{ row }">
+            <div class="table-primary">{{ row.name || "(无名)" }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="Prefix" min-width="220">
+          <template #default="{ row }">
+            <code class="inline-code">{{ row.token_prefix }}</code>
+          </template>
+        </el-table-column>
+        <el-table-column label="Created" min-width="160">
+          <template #default="{ row }">
+            <span class="soft-meta">{{ formatDateTime(row.created_at) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Last used" min-width="160">
+          <template #default="{ row }">
+            <span class="soft-meta">{{ row.last_used_at ? formatDateTime(row.last_used_at) : "—" }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Status" width="120">
+          <template #default="{ row }">
+            <el-tag v-if="row.revoked_at" type="danger" round>revoked</el-tag>
+            <el-tag v-else type="success" round>active</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100" align="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="!row.revoked_at"
+              size="small"
+              type="danger"
+              plain
+              @click="revokeKey(row)"
+            >revoke</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+  </el-drawer>
+
+  <!-- Issue-key dialog: name only -->
+  <el-dialog
+    v-model="issueDialog.visible"
+    title="签发新 API key"
+    width="min(520px, calc(100vw - 24px))"
+    destroy-on-close
+  >
+    <el-form label-position="top" class="provider-form">
+      <el-form-item label="Name">
+        <el-input
+          v-model.trim="issueDialog.name"
+          placeholder="用途备注，例如 laptop / ci / service-X"
+        ></el-input>
+        <div class="field-hint">留空时会使用默认名 “default”。</div>
+      </el-form-item>
+    </el-form>
+    <div class="editor-actions">
+      <el-button @click="issueDialog.visible = false">取消</el-button>
+      <el-button type="primary" @click="issueKey" :loading="issueDialog.saving">签发</el-button>
+    </div>
+  </el-dialog>
+
+  <!-- Show-once token dialog -->
+  <el-dialog
+    v-model="tokenDialog.visible"
+    title="保管好这把 key"
+    width="min(580px, calc(100vw - 24px))"
+    :close-on-click-modal="false"
+    destroy-on-close
+  >
+    <el-alert
+      title="明文只显示这一次。关闭对话框后服务端就只存哈希了，无法再找回。"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="inline-alert"
+    ></el-alert>
+    <p class="section-copy">把下面这串复制给对应的使用者，或立即粘贴到你自己要用的客户端配置里。</p>
+    <div class="token-reveal">
+      <code>{{ tokenDialog.token }}</code>
+    </div>
+    <div class="editor-actions">
+      <el-button @click="copyToken">复制到剪贴板</el-button>
+      <el-button type="primary" @click="tokenDialog.visible = false">我已保存</el-button>
+    </div>
+  </el-dialog>
+</div>
+
+<script src="vendor/vue.global.prod.js"></script>
+<script src="vendor/element-plus.full.min.js"></script>
+<script src="common.js"></script>
+<script src="users.js"></script>
+</body>
+</html>
