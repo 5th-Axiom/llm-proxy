@@ -133,6 +133,63 @@ createApp({
       return "inherit";
     },
 
+    proxyBaseURL() {
+      // server.listen can be ":8080" (all-interfaces) or "host:port". In
+      // the wildcard case we guess 127.0.0.1 so the snippet is copy-paste
+      // runnable from the same host the admin browser is on.
+      const listen = (this.summary && this.summary.listen) || ":8080";
+      if (listen.startsWith(":")) return "http://127.0.0.1" + listen;
+      return "http://" + listen;
+    },
+
+    snippetPath(type) {
+      // Map provider type to the canonical endpoint clients hit. The proxy
+      // itself accepts anything under base_path/v1/... but these are the
+      // ones people actually care about for a first smoke-test.
+      if (type === "anthropic") return "/v1/messages";
+      return "/v1/chat/completions";
+    },
+
+    snippetTitle(row) {
+      const path = (row.base_path || "") + this.snippetPath(row.type);
+      return `${row.type} POST ${path}`;
+    },
+
+    snippetBody(type) {
+      if (type === "anthropic") {
+        return `{"model":"<MODEL>","max_tokens":256,"messages":[{"role":"user","content":"hi"}]}`;
+      }
+      return `{"model":"<MODEL>","messages":[{"role":"user","content":"hi"}]}`;
+    },
+
+    snippetAuthHeader(type) {
+      // Both forms are accepted by the proxy; anthropic clients usually
+      // reach for x-api-key, openai clients for Authorization. Match the
+      // user's muscle memory so the snippet is obvious.
+      if (type === "anthropic") return `-H 'x-api-key: <PROXY_TOKEN>'`;
+      return `-H 'Authorization: Bearer <PROXY_TOKEN>'`;
+    },
+
+    buildCurl(row) {
+      const url = this.proxyBaseURL() + row.base_path + this.snippetPath(row.type);
+      const lines = [
+        `curl ${url} \\`,
+        `  ${this.snippetAuthHeader(row.type)} \\`,
+        `  -H 'Content-Type: application/json' \\`,
+        `  -d '${this.snippetBody(row.type)}'`,
+      ];
+      return lines.join("\n");
+    },
+
+    async copySnippet(row) {
+      try {
+        await navigator.clipboard.writeText(this.buildCurl(row));
+        ElMessage.success("已复制到剪贴板");
+      } catch (_) {
+        ElMessage.warning("无法访问剪贴板，请手动选择复制");
+      }
+    },
+
     tokenCountingType(value) {
       if (value === true) return "success";
       if (value === false) return "danger";

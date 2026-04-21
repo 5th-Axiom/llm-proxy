@@ -96,6 +96,22 @@
           class="data-table"
           empty-text="暂无 provider"
         >
+          <el-table-column type="expand" width="40">
+            <template #default="{ row }">
+              <div class="snippet-block">
+                <div class="snippet-head">
+                  <div>
+                    <p class="section-kicker">Quick call</p>
+                    <h4>{{ snippetTitle(row) }}</h4>
+                    <p class="soft-meta">复制这段 curl，替换 <code class="inline-code">&lt;PROXY_TOKEN&gt;</code> 和 <code class="inline-code">&lt;MODEL&gt;</code> 即可打一次真实调用。</p>
+                  </div>
+                  <el-button plain @click="copySnippet(row)">复制</el-button>
+                </div>
+                <pre class="snippet">{{ buildCurl(row) }}</pre>
+              </div>
+            </template>
+          </el-table-column>
+
           <el-table-column label="Provider" min-width="220">
             <template #default="{ row }">
               <div class="table-primary">{{ row.name }}</div>
