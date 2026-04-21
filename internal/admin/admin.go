@@ -75,6 +75,7 @@ func NewHandler(container *appstate.Container, configPath string, logger *slog.L
 	mux.HandleFunc("/api/users/", h.handleUserItem)
 	mux.HandleFunc("/api/keys/", h.handleKeyItem)
 	mux.HandleFunc("/api/config", h.handleConfigSummary)
+	mux.HandleFunc("/api/usage/summary", h.handleUsageSummary)
 	mux.HandleFunc("/api/login", h.handleLogin)
 	mux.HandleFunc("/api/logout", h.handleLogout)
 	mux.HandleFunc("/api/auth", h.handleAuthStatus)
