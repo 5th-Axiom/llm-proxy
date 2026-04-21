@@ -1,0 +1,186 @@
+{
+  "annotations": { "list": [] },
+  "description": "llm-proxy runtime overview — request rate, status breakdown, per-provider token usage.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "refresh": "15s",
+  "schemaVersion": 38,
+  "tags": ["llm-proxy"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "llm-proxy",
+  "uid": "llm-proxy",
+  "version": 1,
+  "weekStart": "",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Request rate (5m)",
+      "id": 1,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(rate(llm_proxy_requests_total[5m]))", "refId": "A", "legendFormat": "req/s" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Total requests",
+      "id": 2,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(llm_proxy_requests_total)", "refId": "A", "legendFormat": "total" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "auto" }
+    },
+    {
+      "type": "stat",
+      "title": "Prompt tokens",
+      "id": 3,
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(llm_proxy_prompt_tokens_total)", "refId": "A", "legendFormat": "tokens" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "auto" }
+    },
+    {
+      "type": "stat",
+      "title": "Completion tokens",
+      "id": 4,
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(llm_proxy_completion_tokens_total)", "refId": "A", "legendFormat": "tokens" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "auto" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests by status (5m rate)",
+      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(llm_proxy_responses_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2 }
+        }
+      },
+      "options": {
+        "legend": { "showLegend": true, "placement": "bottom", "displayMode": "table", "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Token rate by provider (5m)",
+      "id": 6,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (provider) (rate(llm_proxy_prompt_tokens_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{provider}} · prompt"
+        },
+        {
+          "expr": "sum by (provider) (rate(llm_proxy_completion_tokens_total[5m]))",
+          "refId": "B",
+          "legendFormat": "{{provider}} · completion"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 }
+        }
+      },
+      "options": {
+        "legend": { "showLegend": true, "placement": "bottom", "displayMode": "table", "calcs": ["lastNotNull", "sum"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "table",
+      "title": "Cumulative tokens by provider",
+      "id": 7,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (provider) (llm_proxy_prompt_tokens_total)",
+          "refId": "A",
+          "legendFormat": "prompt",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "sum by (provider) (llm_proxy_completion_tokens_total)",
+          "refId": "B",
+          "legendFormat": "completion",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "indexByName": { "provider": 0, "Value #A": 1, "Value #B": 2 },
+            "renameByName": {
+              "provider": "Provider",
+              "Value #A": "Prompt tokens",
+              "Value #B": "Completion tokens"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Prompt tokens" },
+            "properties": [{ "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Completion tokens" },
+            "properties": [{ "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } }]
+          }
+        ]
+      },
+      "options": { "showHeader": true }
+    }
+  ]
+}

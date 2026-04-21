@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    source: llm-proxy
+
+scrape_configs:
+  - job_name: llm-proxy
+    metrics_path: /metrics
+    # llm-proxy's /metrics returns JSON by default; append format=prometheus
+    # via query params so it emits text-exposition counters Prometheus can
+    # parse directly.
+    params:
+      format: [prometheus]
+    # The token below must match admin.metrics_bearer_token in llm-proxy's
+    # config. When admin.password_hash is empty this block can be omitted.
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/scrape-token
+    static_configs:
+      # llm-proxy's admin listener is on 127.0.0.1:8081 by default; from
+      # inside the Prometheus container that means the host gateway.
+      - targets: ["host.docker.internal:8081"]
+        labels:
+          instance: host

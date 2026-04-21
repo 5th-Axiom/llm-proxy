@@ -1,3 +1,4 @@
 config.yaml
 config.ui-demo.yaml
 node_modules/
+deploy/prometheus/scrape-token
