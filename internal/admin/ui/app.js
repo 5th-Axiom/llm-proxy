@@ -2,17 +2,17 @@
 
 const api = {
   async listProviders() {
-    const r = await fetch("/api/providers");
+    const r = await apiFetch("/api/providers");
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
   async summary() {
-    const r = await fetch("/api/config");
+    const r = await apiFetch("/api/config");
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
   async createProvider(p) {
-    const r = await fetch("/api/providers", {
+    const r = await apiFetch("/api/providers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(p),
@@ -21,7 +21,7 @@ const api = {
     return r.json();
   },
   async updateProvider(name, p) {
-    const r = await fetch(`/api/providers/${encodeURIComponent(name)}`, {
+    const r = await apiFetch(`/api/providers/${encodeURIComponent(name)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(p),
@@ -30,7 +30,7 @@ const api = {
     return r.json();
   },
   async deleteProvider(name) {
-    const r = await fetch(`/api/providers/${encodeURIComponent(name)}`, { method: "DELETE" });
+    const r = await apiFetch(`/api/providers/${encodeURIComponent(name)}`, { method: "DELETE" });
     if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
   },
 };
@@ -141,11 +141,11 @@ async function refresh() {
     const tr = document.createElement("tr");
     const tc = p.token_counting === true ? "on" : p.token_counting === false ? "off" : "inherit";
     tr.innerHTML = `
-      <td>${esc(p.name)}</td>
-      <td>${esc(p.type)}</td>
-      <td><code>${esc(p.base_path)}</code></td>
-      <td><code>${esc(p.upstream_base_url)}</code></td>
-      <td><code>${esc(p.api_key_preview)}</code></td>
+      <td>${escHTML(p.name)}</td>
+      <td>${escHTML(p.type)}</td>
+      <td><code>${escHTML(p.base_path)}</code></td>
+      <td><code>${escHTML(p.upstream_base_url)}</code></td>
+      <td><code>${escHTML(p.api_key_preview)}</code></td>
       <td>${tc}</td>
       <td><div class="actions">
         <button data-act="edit">编辑</button>
@@ -163,18 +163,7 @@ async function refresh() {
   }
 }
 
-function esc(s) {
-  return (s ?? "").toString().replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-}
-function maskPreview(t) {
-  if (!t) return "";
-  if (t.length <= 6) return "••••";
-  return "••••" + t.slice(-4);
-}
-
 refresh().catch((err) => {
   document.querySelector("main").insertAdjacentHTML("afterbegin",
-    `<div class="error">加载失败：${esc(err.message || err)}</div>`);
+    `<div class="error">加载失败：${escHTML(err.message || err)}</div>`);
 });

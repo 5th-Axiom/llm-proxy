@@ -181,8 +181,8 @@ func TestUIServedAtRoot(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if !bytes.Contains(body, []byte("llm-proxy admin")) {
-		t.Fatalf("ui body does not contain page title:\n%s", body)
+	if !bytes.Contains(body, []byte("<h1>llm-proxy</h1>")) {
+		t.Fatalf("ui body does not contain page heading:\n%s", body)
 	}
 }
 

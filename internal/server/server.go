@@ -77,11 +77,13 @@ func BuildHandlers(_ context.Context, cfg config.Config, configPath string, logg
 	})
 	publicMux.Handle("/", proxyHandler)
 
-	adminMux := http.NewServeMux()
-	adminMux.Handle("/metrics", metrics.Handler())
-	adminMux.Handle("/", admin.NewHandler(container, configPath, logger))
+	adminHandler := admin.NewHandler(container, configPath, logger, admin.Options{
+		PasswordHash:  cfg.Admin.PasswordHash,
+		SessionTTLMin: cfg.Admin.SessionTTLMin,
+		Metrics:       metrics.Handler(),
+	})
 
-	return Handlers{Public: publicMux, Admin: adminMux, Container: container}, nil
+	return Handlers{Public: publicMux, Admin: adminHandler, Container: container}, nil
 }
 
 // Service pairs the public-facing proxy server with the loopback-only admin
