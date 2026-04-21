@@ -218,15 +218,33 @@
             <el-tag v-else type="success" round>active</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100" align="right">
+        <el-table-column label="操作" width="300" align="right">
           <template #default="{ row }">
-            <el-button
-              v-if="!row.revoked_at"
-              size="small"
-              type="danger"
-              plain
-              @click="revokeKey(row)"
-            >revoke</el-button>
+            <div class="row-actions">
+              <el-button
+                size="small"
+                :disabled="!row.plaintext_present"
+                @click="copyKey(row)"
+              >复制</el-button>
+              <el-button
+                size="small"
+                :disabled="!row.plaintext_present"
+                @click="revealKey(row)"
+              >查看</el-button>
+              <el-button
+                v-if="!row.revoked_at"
+                size="small"
+                type="danger"
+                plain
+                @click="revokeKey(row)"
+              >撤销</el-button>
+              <el-button
+                v-else
+                size="small"
+                type="danger"
+                @click="deleteKey(row)"
+              >删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -255,16 +273,17 @@
     </div>
   </el-dialog>
 
-  <!-- Show-once token dialog -->
+  <!-- Token reveal dialog (shown on issue and on "查看") -->
   <el-dialog
     v-model="tokenDialog.visible"
-    title="保管好这把 key"
+    :title="tokenDialog.title"
     width="min(580px, calc(100vw - 24px))"
     :close-on-click-modal="false"
     destroy-on-close
   >
     <el-alert
-      title="明文只显示这一次。关闭对话框后服务端就只存哈希了，无法再找回。"
+      v-if="tokenDialog.warn"
+      :title="tokenDialog.warn"
       type="warning"
       show-icon
       :closable="false"
@@ -276,7 +295,7 @@
     </div>
     <div class="editor-actions">
       <el-button @click="copyToken">复制到剪贴板</el-button>
-      <el-button type="primary" @click="tokenDialog.visible = false">我已保存</el-button>
+      <el-button type="primary" @click="tokenDialog.visible = false">关闭</el-button>
     </div>
   </el-dialog>
 </div>

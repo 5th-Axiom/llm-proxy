@@ -50,10 +50,21 @@ const api = {
     return r.json();
   },
   async revokeKey(prefix) {
+    const r = await apiFetch(`/api/keys/${encodeURIComponent(prefix)}/revoke`, {
+      method: "POST",
+    });
+    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  },
+  async deleteKey(prefix) {
     const r = await apiFetch(`/api/keys/${encodeURIComponent(prefix)}`, {
       method: "DELETE",
     });
     if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  },
+  async revealKey(prefix) {
+    const r = await apiFetch(`/api/keys/${encodeURIComponent(prefix)}/reveal`);
+    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+    return r.json();
   },
 };
 
@@ -86,6 +97,8 @@ createApp({
       tokenDialog: {
         visible: false,
         token: "",
+        title: "",
+        warn: "",
       },
     };
   },
@@ -212,8 +225,11 @@ createApp({
       try {
         const resp = await api.issueKey(this.keysDrawer.user.id, this.issueDialog.name.trim());
         this.issueDialog.visible = false;
-        this.tokenDialog.token = resp.token;
-        this.tokenDialog.visible = true;
+        this.showToken(
+          "保管好这把新 key",
+          resp.token,
+          "明文只显示这一次，关闭后可随时回到列表里点“查看”重新展开。",
+        );
         await this.reloadKeys();
         await this.refresh();
       } catch (err) {
@@ -223,10 +239,36 @@ createApp({
       }
     },
 
+    showToken(title, token, warn) {
+      this.tokenDialog.title = title;
+      this.tokenDialog.token = token;
+      this.tokenDialog.warn = warn || "";
+      this.tokenDialog.visible = true;
+    },
+
+    async copyKey(key) {
+      try {
+        const resp = await api.revealKey(key.token_prefix);
+        await navigator.clipboard.writeText(resp.token);
+        ElMessage.success("已复制到剪贴板");
+      } catch (err) {
+        ElMessage.error(String(err.message || err));
+      }
+    },
+
+    async revealKey(key) {
+      try {
+        const resp = await api.revealKey(key.token_prefix);
+        this.showToken(`${key.name || "key"} · 明文`, resp.token, "");
+      } catch (err) {
+        ElMessage.error(String(err.message || err));
+      }
+    },
+
     async revokeKey(key) {
       try {
         await ElMessageBox.confirm(
-          `撤销 key "${key.token_prefix}" 后不可恢复，是否继续？`,
+          `撤销 key "${key.token_prefix}" 后，使用此 key 的调用会立即 401。撤销后仍可在列表里“删除”彻底移除。`,
           "确认撤销",
           { confirmButtonText: "撤销", cancelButtonText: "取消", type: "warning" },
         );
@@ -234,6 +276,22 @@ createApp({
       try {
         await api.revokeKey(key.token_prefix);
         ElMessage.success("已撤销");
+        await this.reloadKeys();
+        await this.refresh();
+      } catch (err) { ElMessage.error(String(err.message || err)); }
+    },
+
+    async deleteKey(key) {
+      try {
+        await ElMessageBox.confirm(
+          `彻底删除 key "${key.token_prefix}"？此操作不可撤销；相关 usage 记录的 key_id 会置空（仍按 user 归集）。`,
+          "确认删除",
+          { confirmButtonText: "删除", cancelButtonText: "取消", type: "error" },
+        );
+      } catch (_) { return; }
+      try {
+        await api.deleteKey(key.token_prefix);
+        ElMessage.success("已删除");
         await this.reloadKeys();
         await this.refresh();
       } catch (err) { ElMessage.error(String(err.message || err)); }
