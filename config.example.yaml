@@ -11,9 +11,15 @@ server:
 # when the loopback listener is your only trust boundary). To require login,
 # generate a hash via `./llm-proxy -hash-password` (reads password from stdin)
 # and paste it here.
+#
+# metrics_bearer_token lets a scraper (Prometheus) pull /metrics with
+# `Authorization: Bearer <token>` without a session cookie — keep it separate
+# from server.tokens so rotating the scrape credential does not disrupt
+# proxy clients. See deploy/ for a ready-made Prometheus + Grafana stack.
 # admin:
 #   password_hash: "pbkdf2-sha256$210000$...$..."
 #   session_ttl_min: 720  # 12h default
+#   metrics_bearer_token: "long-random-string-for-prometheus"
 
 transport:
   max_idle_conns: 512

@@ -34,9 +34,16 @@ type Config struct {
 // listener is loopback-only and trusted to its OS boundary. Set PasswordHash
 // (generate with `llm-proxy -hash-password`) to require login via cookie
 // session.
+//
+// MetricsBearerToken, if set, lets a scraper (Prometheus) pull /metrics with
+// `Authorization: Bearer <token>` without needing a session cookie. This is
+// the preferred way to expose metrics when admin login is enabled; keep the
+// token separate from server.tokens so scraping credentials can be rotated
+// independently of client proxy tokens.
 type AdminConfig struct {
-	PasswordHash  string `yaml:"password_hash,omitempty"`
-	SessionTTLMin int    `yaml:"session_ttl_min,omitempty"`
+	PasswordHash       string `yaml:"password_hash,omitempty"`
+	SessionTTLMin      int    `yaml:"session_ttl_min,omitempty"`
+	MetricsBearerToken string `yaml:"metrics_bearer_token,omitempty"`
 }
 
 type TokenCountingConfig struct {

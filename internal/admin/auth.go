@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -22,6 +23,14 @@ func (h *Handler) requireAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// /metrics additionally accepts a static bearer token so scrapers
+		// (Prometheus) can pull without a session cookie. The token is
+		// optional; when unset the endpoint behaves like any other
+		// authenticated path.
+		if r.URL.Path == "/metrics" && h.metricsBearerAccepted(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		cookie, err := r.Cookie(sessionCookieName)
 		if err != nil || !h.sessions.Valid(cookie.Value) {
 			if isAPIPath(r.URL.Path) {
@@ -33,6 +42,19 @@ func (h *Handler) requireAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (h *Handler) metricsBearerAccepted(r *http.Request) bool {
+	if h.metricsBearerToken == "" {
+		return false
+	}
+	header := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	got := strings.TrimSpace(header[len(prefix):])
+	return subtle.ConstantTimeCompare([]byte(got), []byte(h.metricsBearerToken)) == 1
 }
 
 func (h *Handler) authEnabled() bool {
