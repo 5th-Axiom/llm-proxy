@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -18,21 +18,20 @@ const (
 )
 
 type Config struct {
-	Server       ServerConfig       `yaml:"server"`
-	Transport    TransportConfig    `yaml:"transport"`
-	Providers    []ProviderConfig   `yaml:"providers"`
+	Server        ServerConfig        `yaml:"server"`
+	Transport     TransportConfig     `yaml:"transport"`
+	Providers     []ProviderConfig    `yaml:"providers"`
 	TokenCounting TokenCountingConfig `yaml:"token_counting"`
 }
 
 type TokenCountingConfig struct {
-	Enabled          bool    `yaml:"enabled"`
-	InputPriceRatio  float64 `yaml:"input_price_ratio"`
-	OutputPriceRatio float64 `yaml:"output_price_ratio"`
+	Enabled bool `yaml:"enabled"`
 }
 
 type ServerConfig struct {
-	Listen string   `yaml:"listen"`
-	Tokens []string `yaml:"tokens"`
+	Listen        string   `yaml:"listen"`
+	MetricsListen string   `yaml:"metrics_listen"`
+	Tokens        []string `yaml:"tokens"`
 }
 
 type TransportConfig struct {
@@ -49,14 +48,14 @@ type ProviderConfig struct {
 	UpstreamBaseURL string            `yaml:"upstream_base_url"`
 	UpstreamAPIKey  string            `yaml:"upstream_api_key"`
 	UpstreamHeaders map[string]string `yaml:"upstream_headers"`
-	TokenCounting   bool              `yaml:"token_counting"`
-	InputPriceRatio  float64          `yaml:"input_price_ratio"`
-	OutputPriceRatio float64          `yaml:"output_price_ratio"`
+	// TokenCounting is a pointer so nil means "inherit global", allowing a
+	// provider to opt out of token counting even when the global default is on.
+	TokenCounting *bool `yaml:"token_counting"`
 }
 
 func (p ProviderConfig) IsTokenCountingEnabled(global TokenCountingConfig) bool {
-	if p.TokenCounting {
-		return true
+	if p.TokenCounting != nil {
+		return *p.TokenCounting
 	}
 	return global.Enabled
 }
@@ -86,6 +85,9 @@ func (c *Config) applyDefaults() {
 	if c.Server.Listen == "" {
 		c.Server.Listen = ":8080"
 	}
+	if c.Server.MetricsListen == "" {
+		c.Server.MetricsListen = "127.0.0.1:8081"
+	}
 	if c.Transport.MaxIdleConns == 0 {
 		c.Transport.MaxIdleConns = 512
 	}
@@ -94,12 +96,6 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Transport.IdleConnTimeoutSec == 0 {
 		c.Transport.IdleConnTimeoutSec = 90
-	}
-	if c.TokenCounting.InputPriceRatio == 0 {
-		c.TokenCounting.InputPriceRatio = 1.0
-	}
-	if c.TokenCounting.OutputPriceRatio == 0 {
-		c.TokenCounting.OutputPriceRatio = 1.0
 	}
 	for i := range c.Providers {
 		c.Providers[i].BasePath = normalizeBasePath(c.Providers[i].BasePath)
@@ -110,6 +106,12 @@ func (c *Config) applyDefaults() {
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.Server.Listen) == "" {
 		return errors.New("server.listen is required")
+	}
+	if strings.TrimSpace(c.Server.MetricsListen) == "" {
+		return errors.New("server.metrics_listen is required")
+	}
+	if c.Server.MetricsListen == c.Server.Listen {
+		return errors.New("server.metrics_listen must differ from server.listen")
 	}
 	if len(c.Server.Tokens) == 0 {
 		return errors.New("server.tokens must contain at least one token")
@@ -155,11 +157,11 @@ func (c Config) Validate() error {
 	return nil
 }
 
-func normalizeBasePath(path string) string {
-	if path == "" {
+func normalizeBasePath(p string) string {
+	if p == "" {
 		return ""
 	}
-	cleaned := filepath.ToSlash(filepath.Clean(path))
+	cleaned := path.Clean(p)
 	if !strings.HasPrefix(cleaned, "/") {
 		cleaned = "/" + cleaned
 	}

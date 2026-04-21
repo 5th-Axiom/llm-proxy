@@ -266,8 +266,11 @@ func TestHandlerExposesBasicMetrics(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	proxy := httptest.NewServer(testHandler(t, upstream.URL))
+	handlers := testHandlers(t, upstream.URL)
+	proxy := httptest.NewServer(handlers.Public)
 	defer proxy.Close()
+	admin := httptest.NewServer(handlers.Admin)
+	defer admin.Close()
 
 	req, err := http.NewRequest(http.MethodPost, proxy.URL+"/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1"}`))
 	if err != nil {
@@ -283,7 +286,7 @@ func TestHandlerExposesBasicMetrics(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	metricsResp, err := client.Get(proxy.URL + "/metrics")
+	metricsResp, err := client.Get(admin.URL + "/metrics")
 	if err != nil {
 		t.Fatalf("client.Get() error = %v", err)
 	}
@@ -309,8 +312,13 @@ func TestHandlerExposesBasicMetrics(t *testing.T) {
 
 func testHandler(t *testing.T, upstreamBaseURL string) http.Handler {
 	t.Helper()
+	return testHandlers(t, upstreamBaseURL).Public
+}
 
-	return testHandlerWithProviders(t, []config.ProviderConfig{
+func testHandlers(t *testing.T, upstreamBaseURL string) Handlers {
+	t.Helper()
+
+	return testHandlersWithProviders(t, []config.ProviderConfig{
 		{
 			Name:            "openai-main",
 			Type:            config.ProviderTypeOpenAI,
@@ -330,18 +338,24 @@ func testHandler(t *testing.T, upstreamBaseURL string) http.Handler {
 
 func testHandlerWithProviders(t *testing.T, providers []config.ProviderConfig) http.Handler {
 	t.Helper()
+	return testHandlersWithProviders(t, providers).Public
+}
+
+func testHandlersWithProviders(t *testing.T, providers []config.ProviderConfig) Handlers {
+	t.Helper()
 
 	cfg := config.Config{
 		Server: config.ServerConfig{
-			Listen: ":8080",
-			Tokens: []string{"proxy-token"},
+			Listen:        ":8080",
+			MetricsListen: "127.0.0.1:0",
+			Tokens:        []string{"proxy-token"},
 		},
 		Providers: providers,
 	}
 
-	handler, err := NewHandler(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handlers, err := BuildHandlers(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
-		t.Fatalf("NewHandler() error = %v", err)
+		t.Fatalf("BuildHandlers() error = %v", err)
 	}
-	return handler
+	return handlers
 }

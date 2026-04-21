@@ -29,7 +29,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("starting llm proxy", "listen", cfg.Server.Listen)
+	logger.Info("starting llm proxy",
+		"listen", cfg.Server.Listen,
+		"metrics_listen", cfg.Server.MetricsListen,
+	)
 	if err := srv.ListenAndServe(); err != nil {
 		logger.Error("server exited", "err", err)
 		os.Exit(1)

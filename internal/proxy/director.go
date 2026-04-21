@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,12 +10,19 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 
 	"llm-proxy/internal/config"
 	anthropicprovider "llm-proxy/internal/providers/anthropic"
 	openaiprovider "llm-proxy/internal/providers/openai"
 	"llm-proxy/internal/tokencount"
 )
+
+// nonStreamingUpstreamTimeout bounds how long a non-streaming request may wait
+// on the upstream. Streaming requests (Accept: text/event-stream or stream:true
+// in the body) are exempt so long-running SSE generations don't get cut off.
+// It is a var so tests can override it.
+var nonStreamingUpstreamTimeout = 60 * time.Second
 
 var versionSegmentPattern = regexp.MustCompile(`^v[0-9]+(?:[A-Za-z0-9._-]*)?$`)
 
@@ -34,8 +42,17 @@ func (f *Forwarder) Forward(w http.ResponseWriter, r *http.Request, provider con
 	}
 
 	tokenCounting := provider.IsTokenCountingEnabled(f.tokenCountCfg)
+	streaming := clientAcceptsStream(r)
 
-	var tc *tokencount.TokenContext
+	// tc is pre-installed in the request context by the outer middleware so
+	// that metrics/logging can see what we populate here. If it isn't (e.g.
+	// unit tests that call Forward directly), we still fill a local one so
+	// the response path can consume it.
+	tc := tokencount.FromContext(r.Context())
+	if tc == nil {
+		tc = &tokencount.TokenContext{}
+	}
+
 	if tokenCounting && r.Body != nil {
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -46,23 +63,25 @@ func (f *Forwarder) Forward(w http.ResponseWriter, r *http.Request, provider con
 		rc := tokencount.ParseRequestContent(bodyBytes)
 		promptTokens := tokencount.CountPromptTokens(string(provider.Type), bodyBytes)
 
-		tc = &tokencount.TokenContext{
-			ProviderName: provider.Name,
-			ProviderType: string(provider.Type),
-			Model:        rc.Model,
-			Enabled:      true,
-		}
+		tc.ProviderName = provider.Name
+		tc.ProviderType = string(provider.Type)
+		tc.Model = rc.Model
+		tc.Enabled = true
 		tc.Counts.PromptTokens = promptTokens
 		tc.Counts.PromptEstimated = true
 
 		if rc.Stream {
+			streaming = true
 			tc.Parser = tokencount.NewStreamingUsageParser(string(provider.Type), rc.Model)
 		}
 
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		r.ContentLength = int64(len(bodyBytes))
+	}
 
-		ctx := tokencount.WithContext(r.Context(), tc)
+	if !streaming {
+		ctx, cancel := context.WithTimeout(r.Context(), nonStreamingUpstreamTimeout)
+		defer cancel()
 		r = r.WithContext(ctx)
 	}
 
@@ -77,6 +96,9 @@ func (f *Forwarder) Forward(w http.ResponseWriter, r *http.Request, provider con
 	}
 	defer resp.Body.Close()
 
+	if !tc.Enabled {
+		tc = nil
+	}
 	return writeUpstreamResponse(w, r, resp, tc)
 }
 
@@ -122,6 +144,10 @@ func buildUpstreamRequest(r *http.Request, target *url.URL, provider config.Prov
 	}
 
 	return upstreamReq, nil
+}
+
+func clientAcceptsStream(r *http.Request) bool {
+	return strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream")
 }
 
 func applyOriginalClientMetadata(dstReq, srcReq *http.Request) {

@@ -1,5 +1,8 @@
 server:
   listen: ":8080"
+  # /metrics is served from a separate listener so provider names and token
+  # usage are not exposed on the public listener. Default: 127.0.0.1:8081.
+  metrics_listen: "127.0.0.1:8081"
   tokens:
     - "proxy-token-1"
     - "proxy-token-2"
@@ -12,11 +15,9 @@ transport:
 
 # Token counting: estimate prompt tokens and extract usage from responses.
 # When enabled, token counts are recorded in /metrics and request logs.
-# Per-provider overrides take precedence over global settings.
+# Each provider can override with token_counting: true | false.
 token_counting:
   enabled: false
-  input_price_ratio: 1.0
-  output_price_ratio: 1.0
 
 providers:
   - name: "openai-main"
@@ -25,8 +26,6 @@ providers:
     upstream_base_url: "https://api.openai.com/v1"
     upstream_api_key: "${OPENAI_API_KEY}"
     # token_counting: true
-    # input_price_ratio: 1.0
-    # output_price_ratio: 3.0
 
   - name: "glm-prod"
     type: "openai"

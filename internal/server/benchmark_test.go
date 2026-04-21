@@ -41,8 +41,9 @@ func benchmarkHandler(b *testing.B, upstreamBaseURL string) http.Handler {
 
 	cfg := config.Config{
 		Server: config.ServerConfig{
-			Listen: ":8080",
-			Tokens: []string{"proxy-token"},
+			Listen:        ":8080",
+			MetricsListen: "127.0.0.1:0",
+			Tokens:        []string{"proxy-token"},
 		},
 		Providers: []config.ProviderConfig{
 			{
@@ -55,9 +56,9 @@ func benchmarkHandler(b *testing.B, upstreamBaseURL string) http.Handler {
 		},
 	}
 
-	handler, err := NewHandler(b.Context(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handlers, err := BuildHandlers(b.Context(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
-		b.Fatalf("NewHandler() error = %v", err)
+		b.Fatalf("BuildHandlers() error = %v", err)
 	}
-	return handler
+	return handlers.Public
 }
