@@ -26,16 +26,19 @@ const visiblePrefixHexLen = 16
 // in the secret portion alone — plenty for an API key.
 const secretHexLen = 32
 
-// APIKey is a row in the api_keys table. The raw token is only ever returned
-// by IssueKey; subsequent reads never resurface the plaintext.
+// APIKey is a row in the api_keys table. The raw token is only resurfaced
+// through GetKeyPlaintext; list queries expose only metadata plus a boolean
+// flag (PlaintextPresent) so UIs can hide the "view" button for rows that
+// predate plaintext storage.
 type APIKey struct {
-	ID          int64
-	UserID      int64
-	Name        string
-	TokenPrefix string // "llmp_<16hex>"
-	CreatedAt   time.Time
-	LastUsedAt  *time.Time
-	RevokedAt   *time.Time
+	ID               int64
+	UserID           int64
+	Name             string
+	TokenPrefix      string // "llmp_<16hex>"
+	CreatedAt        time.Time
+	LastUsedAt       *time.Time
+	RevokedAt        *time.Time
+	PlaintextPresent bool
 }
 
 // IssuedKey wraps a newly-minted key with its plaintext token. The caller
@@ -62,10 +65,13 @@ func (s *Store) IssueKey(ctx context.Context, userID int64, name string) (*Issue
 	token := visiblePrefix + "_" + hex.EncodeToString(secretBytes)
 	hash := sha256.Sum256([]byte(token))
 
+	// token_plaintext is stored so admins can re-copy a key from the UI
+	// after the initial "show once" dialog is dismissed. See migration
+	// 002_api_key_plaintext.sql for the security trade-off.
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO api_keys (user_id, name, token_hash, token_prefix)
-		VALUES (?, ?, ?, ?)`,
-		userID, name, hash[:], visiblePrefix)
+		INSERT INTO api_keys (user_id, name, token_hash, token_prefix, token_plaintext)
+		VALUES (?, ?, ?, ?, ?)`,
+		userID, name, hash[:], visiblePrefix, token)
 	if err != nil {
 		if isUniqueViolation(err) {
 			// Prefix collision is astronomically unlikely (64 bits) but
@@ -92,7 +98,8 @@ func (s *Store) IssueKey(ctx context.Context, userID int64, name string) (*Issue
 // audit trail; they cannot be reused for auth.
 func (s *Store) ListKeysForUser(ctx context.Context, userID int64) ([]APIKey, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, name, token_prefix, created_at, last_used_at, revoked_at
+		SELECT id, user_id, name, token_prefix, created_at, last_used_at, revoked_at,
+		       token_plaintext IS NOT NULL AND token_plaintext <> ''
 		FROM api_keys
 		WHERE user_id = ?
 		ORDER BY created_at DESC`, userID)
@@ -105,7 +112,8 @@ func (s *Store) ListKeysForUser(ctx context.Context, userID int64) ([]APIKey, er
 	for rows.Next() {
 		var k APIKey
 		var lastUsed, revoked sql.NullTime
-		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.TokenPrefix, &k.CreatedAt, &lastUsed, &revoked); err != nil {
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.TokenPrefix,
+			&k.CreatedAt, &lastUsed, &revoked, &k.PlaintextPresent); err != nil {
 			return nil, err
 		}
 		if lastUsed.Valid {
@@ -119,6 +127,66 @@ func (s *Store) ListKeysForUser(ctx context.Context, userID int64) ([]APIKey, er
 		out = append(out, k)
 	}
 	return out, rows.Err()
+}
+
+// ErrKeyPlaintextUnavailable is returned when a key row exists but its
+// plaintext was never stored — specifically, rows that survived from before
+// migration 002 introduced the token_plaintext column.
+var ErrKeyPlaintextUnavailable = errors.New("key plaintext unavailable")
+
+// GetKeyPlaintext looks up the stored plaintext for a key identified by
+// its visible prefix. Returns ErrNotFound for unknown prefixes and
+// ErrKeyPlaintextUnavailable when the row predates plaintext storage.
+func (s *Store) GetKeyPlaintext(ctx context.Context, prefix string) (string, error) {
+	if !strings.HasPrefix(prefix, KeyTokenPrefix) {
+		return "", ErrNotFound
+	}
+	var plaintext sql.NullString
+	row := s.db.QueryRowContext(ctx,
+		`SELECT token_plaintext FROM api_keys WHERE token_prefix = ?`, prefix)
+	if err := row.Scan(&plaintext); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	if !plaintext.Valid || plaintext.String == "" {
+		return "", ErrKeyPlaintextUnavailable
+	}
+	return plaintext.String, nil
+}
+
+// ErrKeyNotRevoked is returned when DeleteKey is called on a key that is
+// still active. We require revoke-then-delete as a small safety rail: a
+// mis-click in the UI should still leave one confirm step between an
+// operational key and oblivion.
+var ErrKeyNotRevoked = errors.New("key must be revoked before it can be deleted")
+
+// DeleteKey hard-deletes an already-revoked key row. Historical usage
+// records reference the key via ON DELETE SET NULL, so per-user roll-ups
+// stay intact after deletion; we only lose the ability to attribute a row
+// back to the specific key that produced it.
+func (s *Store) DeleteKey(ctx context.Context, prefix string) error {
+	if !strings.HasPrefix(prefix, KeyTokenPrefix) {
+		return ErrNotFound
+	}
+	var revokedAt sql.NullTime
+	row := s.db.QueryRowContext(ctx,
+		`SELECT revoked_at FROM api_keys WHERE token_prefix = ?`, prefix)
+	if err := row.Scan(&revokedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if !revokedAt.Valid {
+		return ErrKeyNotRevoked
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM api_keys WHERE token_prefix = ?`, prefix); err != nil {
+		return err
+	}
+	return nil
 }
 
 // RevokeKey marks the key identified by its visible prefix as revoked. Idempotent —
@@ -188,11 +256,13 @@ func (s *Store) TouchKeyLastUsed(ctx context.Context, keyID int64) error {
 
 func (s *Store) getKey(ctx context.Context, id int64) (*APIKey, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, name, token_prefix, created_at, last_used_at, revoked_at
+		SELECT id, user_id, name, token_prefix, created_at, last_used_at, revoked_at,
+		       token_plaintext IS NOT NULL AND token_plaintext <> ''
 		FROM api_keys WHERE id = ?`, id)
 	var k APIKey
 	var lastUsed, revoked sql.NullTime
-	err := row.Scan(&k.ID, &k.UserID, &k.Name, &k.TokenPrefix, &k.CreatedAt, &lastUsed, &revoked)
+	err := row.Scan(&k.ID, &k.UserID, &k.Name, &k.TokenPrefix,
+		&k.CreatedAt, &lastUsed, &revoked, &k.PlaintextPresent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

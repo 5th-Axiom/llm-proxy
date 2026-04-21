@@ -73,7 +73,7 @@ func TestAdminUserKeyLifecycle(t *testing.T) {
 	}
 
 	// --- 6. Revoke the key ---
-	deleteReq(t, adminTS.URL+"/api/keys/"+tokenPrefix)
+	postJSON(t, adminTS.URL+"/api/keys/"+tokenPrefix+"/revoke", "", http.StatusNoContent)
 
 	// --- 7. Revoked key is rejected ---
 	if code := curlStatus(t, proxyTS.URL+"/ok/v1/anything", token); code != http.StatusUnauthorized {

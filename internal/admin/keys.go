@@ -11,13 +11,14 @@ import (
 )
 
 type keyView struct {
-	ID          int64      `json:"id"`
-	UserID      int64      `json:"user_id"`
-	Name        string     `json:"name"`
-	TokenPrefix string     `json:"token_prefix"`
-	CreatedAt   time.Time  `json:"created_at"`
-	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
-	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+	ID               int64      `json:"id"`
+	UserID           int64      `json:"user_id"`
+	Name             string     `json:"name"`
+	TokenPrefix      string     `json:"token_prefix"`
+	CreatedAt        time.Time  `json:"created_at"`
+	LastUsedAt       *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+	PlaintextPresent bool       `json:"plaintext_present"`
 }
 
 // keyCreatedView is returned once, on POST .../keys. It is the only response
@@ -30,13 +31,14 @@ type keyCreatedView struct {
 
 func toKeyView(k store.APIKey) keyView {
 	return keyView{
-		ID:          k.ID,
-		UserID:      k.UserID,
-		Name:        k.Name,
-		TokenPrefix: k.TokenPrefix,
-		CreatedAt:   k.CreatedAt,
-		LastUsedAt:  k.LastUsedAt,
-		RevokedAt:   k.RevokedAt,
+		ID:               k.ID,
+		UserID:           k.UserID,
+		Name:             k.Name,
+		TokenPrefix:      k.TokenPrefix,
+		CreatedAt:        k.CreatedAt,
+		LastUsedAt:       k.LastUsedAt,
+		RevokedAt:        k.RevokedAt,
+		PlaintextPresent: k.PlaintextPresent,
 	}
 }
 
@@ -98,22 +100,44 @@ func (h *Handler) handleUserKeys(w http.ResponseWriter, r *http.Request, userID 
 	}
 }
 
-// handleKeyItem implements DELETE /api/keys/:prefix. We identify keys by
-// their visible prefix ("llmp_...") rather than database ID so the URL is
-// self-descriptive and an accidental paste into a log won't divulge the
-// secret.
+// handleKeyItem dispatches the per-key endpoints:
+//
+//	POST   /api/keys/:prefix/revoke   mark revoked (reversible: leaves audit row)
+//	GET    /api/keys/:prefix/reveal   return stored plaintext if present
+//	DELETE /api/keys/:prefix          hard-delete; requires the key to be revoked first
+//
+// Identifying by visible prefix (instead of numeric id) keeps the URL
+// self-descriptive and avoids putting secret fragments in logs.
 func (h *Handler) handleKeyItem(w http.ResponseWriter, r *http.Request) {
-	prefix := strings.TrimPrefix(r.URL.Path, "/api/keys/")
-	if prefix == "" || strings.Contains(prefix, "/") {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/keys/")
+	if rest == "" {
 		http.NotFound(w, r)
 		return
 	}
 
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	parts := strings.Split(rest, "/")
+	prefix := parts[0]
+	action := ""
+	if len(parts) == 2 {
+		action = parts[1]
+	} else if len(parts) > 2 {
+		http.NotFound(w, r)
 		return
 	}
 
+	switch {
+	case action == "revoke" && r.Method == http.MethodPost:
+		h.revokeKey(w, r, prefix)
+	case action == "reveal" && r.Method == http.MethodGet:
+		h.revealKey(w, r, prefix)
+	case action == "" && r.Method == http.MethodDelete:
+		h.deleteKey(w, r, prefix)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) revokeKey(w http.ResponseWriter, r *http.Request, prefix string) {
 	if err := h.container.Store().RevokeKey(r.Context(), prefix); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
@@ -124,4 +148,34 @@ func (h *Handler) handleKeyItem(w http.ResponseWriter, r *http.Request) {
 	}
 	h.logger.Info("admin: key revoked", "prefix", prefix)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) deleteKey(w http.ResponseWriter, r *http.Request, prefix string) {
+	err := h.container.Store().DeleteKey(r.Context(), prefix)
+	switch {
+	case err == nil:
+		h.logger.Info("admin: key deleted", "prefix", prefix)
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, store.ErrNotFound):
+		http.NotFound(w, r)
+	case errors.Is(err, store.ErrKeyNotRevoked):
+		http.Error(w, "key must be revoked before it can be deleted", http.StatusConflict)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) revealKey(w http.ResponseWriter, r *http.Request, prefix string) {
+	plaintext, err := h.container.Store().GetKeyPlaintext(r.Context(), prefix)
+	switch {
+	case err == nil:
+		h.logger.Info("admin: key plaintext revealed", "prefix", prefix)
+		writeJSON(w, http.StatusOK, map[string]string{"token": plaintext})
+	case errors.Is(err, store.ErrNotFound):
+		http.NotFound(w, r)
+	case errors.Is(err, store.ErrKeyPlaintextUnavailable):
+		http.Error(w, "plaintext unavailable for this key (predates plaintext storage)", http.StatusGone)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
