@@ -7,10 +7,10 @@ import (
 
 // RequestContent holds extracted text from an LLM API request body.
 type RequestContent struct {
-	Model    string
-	Texts    []string // accumulated text content from messages
-	Tools    int
-	Stream   bool
+	Model  string
+	Texts  []string // accumulated text content from messages
+	Tools  int
+	Stream bool
 }
 
 // ParseRequestContent extracts text content from an OpenAI or Anthropic request body.

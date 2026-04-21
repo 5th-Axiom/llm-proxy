@@ -166,12 +166,6 @@ func (p *StreamingUsageParser) ProcessChunk(line []byte) {
 		}
 	}
 
-	// OpenAI: accumulate delta content for fallback
-	if deltaRaw, ok := raw["choices"]; !ok {
-		_ = deltaRaw // already handled above
-	} else {
-		// content already extracted in extractOpenAIContent
-	}
 }
 
 // Finalize returns final token counts. Falls back to estimation if no usage was found.
