@@ -26,6 +26,10 @@
   - `GET /healthz`（与代理共用监听地址）
   - `GET /metrics`（默认监听 `127.0.0.1:8081`，避免在公网暴露 provider 名与 token 计数）
 - 非流式请求默认 60s 上游超时；`Accept: text/event-stream` 或请求体含 `"stream": true` 时不加超时
+- Admin 管理界面（与 `/metrics` 共用 loopback 监听）：
+  - Web UI：`http://127.0.0.1:8081/ui/`
+  - REST API：`GET/POST/PUT/DELETE /api/providers[/:name]`、`GET /api/config`
+  - 改完立即热生效，不重启进程；写回 YAML 时保留 `${ENV_VAR}` 占位符，不会把上游 key 明文落盘
 
 ## 设计原则
 

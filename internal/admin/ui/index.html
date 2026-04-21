@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>llm-proxy admin</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header>
+  <h1>llm-proxy</h1>
+  <div id="summary" class="summary"></div>
+</header>
+
+<main>
+  <section>
+    <div class="row">
+      <h2>Providers</h2>
+      <button id="new-provider">+ 新建 provider</button>
+    </div>
+    <table id="providers-table">
+      <thead>
+        <tr>
+          <th>name</th>
+          <th>type</th>
+          <th>base_path</th>
+          <th>upstream_base_url</th>
+          <th>api key</th>
+          <th>token counting</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <dialog id="editor">
+    <form id="editor-form" method="dialog">
+      <h3 id="editor-title">新建 provider</h3>
+      <input type="hidden" name="mode" />
+      <input type="hidden" name="original_name" />
+
+      <label>name <input name="name" required placeholder="openai-main" /></label>
+      <label>type
+        <select name="type" required>
+          <option value="openai">openai</option>
+          <option value="anthropic">anthropic</option>
+        </select>
+      </label>
+      <label>base_path <input name="base_path" required placeholder="/openai" /></label>
+      <label>upstream_base_url <input name="upstream_base_url" required placeholder="https://api.openai.com/v1" /></label>
+      <label>upstream_api_key
+        <input name="upstream_api_key" placeholder="sk-... 或 ${ENV_VAR}" />
+        <span class="hint" id="apikey-hint">留空保留现有值</span>
+      </label>
+      <label>token_counting
+        <select name="token_counting">
+          <option value="inherit">inherit global</option>
+          <option value="true">force on</option>
+          <option value="false">force off</option>
+        </select>
+      </label>
+
+      <div class="headers-block">
+        <div class="row">
+          <span>upstream_headers</span>
+          <button type="button" id="add-header">+ 添加一行</button>
+        </div>
+        <div id="headers-list"></div>
+      </div>
+
+      <div class="editor-actions">
+        <button type="button" id="cancel">取消</button>
+        <button type="submit" id="save">保存并热加载</button>
+      </div>
+      <div id="editor-error" class="error"></div>
+    </form>
+  </dialog>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
