@@ -1,57 +1,149 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>llm-proxy · metrics</title>
+<link rel="stylesheet" href="vendor/element-plus.css" />
 <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
-<header>
-  <h1>llm-proxy</h1>
-  <nav>
-    <a href="/ui/">Providers</a>
-    <a href="/ui/metrics.html" class="active">Metrics</a>
-  </nav>
-  <div class="header-right">
-    <span class="summary"><label><input type="checkbox" id="auto" checked /> auto-refresh (3s)</label></span>
-    <button id="logout" class="logout" hidden>登出</button>
+<body class="admin-body">
+<div id="app" v-cloak>
+  <div class="admin-shell">
+    <header class="admin-topbar">
+      <div class="brand-block">
+        <div class="brand-mark">LP</div>
+        <div>
+          <p class="brand-kicker">Admin Console</p>
+          <h1>llm-proxy</h1>
+        </div>
+      </div>
+
+      <nav class="top-nav">
+        <a href="/ui/">Providers</a>
+        <a href="/ui/metrics.html" class="active">Metrics</a>
+      </nav>
+
+      <div class="topbar-actions compact">
+        <div class="refresh-pill">
+          <span>自动刷新</span>
+          <el-switch v-model="autoRefresh"></el-switch>
+        </div>
+        <el-button
+          v-if="authEnabled"
+          id="logout"
+          class="logout-button"
+          plain
+          @click="logout"
+        >
+          登出
+        </el-button>
+      </div>
+    </header>
+
+    <main class="page-stack">
+      <section class="hero-section">
+        <div>
+          <p class="section-kicker">Service Metrics</p>
+          <h2>更直观地查看流量状态与 token 消耗</h2>
+          <p class="section-copy">聚焦运行时最常看的指标，把总请求量、成功率、错误响应和 token 使用情况放在更容易扫读的卡片和表格里。</p>
+        </div>
+        <div class="hero-side-note">
+          <div class="soft-meta">最近更新时间</div>
+          <strong>{{ lastUpdatedText }}</strong>
+        </div>
+      </section>
+
+      <el-alert
+        v-if="loadError"
+        :title="loadError"
+        type="error"
+        show-icon
+        :closable="false"
+        class="inline-alert"
+      ></el-alert>
+
+      <section class="stats-grid">
+        <el-card v-for="card in overviewCards" :key="card.label" shadow="never" class="metric-card">
+          <p class="metric-label">{{ card.label }}</p>
+          <div class="metric-value">{{ card.value }}</div>
+          <p class="metric-meta">{{ card.meta }}</p>
+        </el-card>
+      </section>
+
+      <section class="split-grid">
+        <el-card shadow="never" class="panel-card">
+          <template #header>
+            <div class="panel-head">
+              <div>
+                <p class="section-kicker">Responses</p>
+                <h3>按状态码</h3>
+              </div>
+            </div>
+          </template>
+
+          <el-table :data="statusRows" stripe class="data-table" empty-text="暂无状态码数据">
+            <el-table-column label="Status" width="140">
+              <template #default="{ row }">
+                <el-tag :type="row.tagType" round>{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="count" label="Count"></el-table-column>
+          </el-table>
+        </el-card>
+
+        <el-card shadow="never" class="panel-card">
+          <template #header>
+            <div class="panel-head">
+              <div>
+                <p class="section-kicker">Token Usage</p>
+                <h3>按 Provider 的 Token 使用</h3>
+              </div>
+            </div>
+          </template>
+
+          <el-alert
+            v-if="tokenRows.length === 0"
+            title="还没有记录 token。要记录需要在全局或 provider 级别启用 token_counting。"
+            type="info"
+            show-icon
+            :closable="false"
+            class="inline-alert"
+          ></el-alert>
+
+          <el-table :data="tokenRows" stripe class="data-table" empty-text="暂无 token 数据">
+            <el-table-column label="Provider" min-width="220">
+              <template #default="{ row }">
+                <div class="table-primary">{{ row.provider }}</div>
+                <div class="table-secondary">累计调用量已纳入统计</div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="prompt" label="Prompt" min-width="120"></el-table-column>
+            <el-table-column prop="completion" label="Completion" min-width="120"></el-table-column>
+            <el-table-column prop="total" label="Total" min-width="120"></el-table-column>
+          </el-table>
+        </el-card>
+      </section>
+
+      <el-card shadow="never" class="panel-card">
+        <template #header>
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Prometheus</p>
+              <h3>原始输出</h3>
+            </div>
+            <el-button plain @click="refresh" :loading="loading">立即刷新</el-button>
+          </div>
+        </template>
+
+        <pre class="prom-block">{{ rawProm }}</pre>
+      </el-card>
+    </main>
   </div>
-</header>
+</div>
 
-<main>
-  <section>
-    <div class="row">
-      <h2>概览</h2>
-      <span id="last-updated" class="summary"></span>
-    </div>
-    <div id="cards" class="cards"></div>
-  </section>
-
-  <section>
-    <h2>按状态码</h2>
-    <table id="status-table">
-      <thead><tr><th>status</th><th>count</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </section>
-
-  <section>
-    <h2>按 provider 的 token 使用</h2>
-    <table id="token-table">
-      <thead><tr><th>provider</th><th>prompt</th><th>completion</th><th>total</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <p class="summary" id="token-empty" hidden>还没有记录 token。要记录需要在全局或 provider 级别启用 <code>token_counting</code>。</p>
-  </section>
-
-  <section>
-    <details>
-      <summary>原始 Prometheus 输出</summary>
-      <pre id="raw-prom" class="raw-prom"></pre>
-    </details>
-  </section>
-</main>
-
+<script src="vendor/vue.global.prod.js"></script>
+<script src="vendor/element-plus.full.min.js"></script>
 <script src="common.js"></script>
 <script src="metrics.js"></script>
 </body>

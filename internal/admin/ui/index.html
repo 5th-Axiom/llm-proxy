@@ -1,89 +1,238 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>llm-proxy · providers</title>
+<link rel="stylesheet" href="vendor/element-plus.css" />
 <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
-<header>
-  <h1>llm-proxy</h1>
-  <nav>
-    <a href="/ui/" class="active">Providers</a>
-    <a href="/ui/metrics.html">Metrics</a>
-  </nav>
-  <div class="header-right">
-    <span id="summary" class="summary"></span>
-    <button id="logout" class="logout" hidden>登出</button>
-  </div>
-</header>
-
-<main>
-  <section>
-    <div class="row">
-      <h2>Providers</h2>
-      <button id="new-provider">+ 新建 provider</button>
-    </div>
-    <table id="providers-table">
-      <thead>
-        <tr>
-          <th>name</th>
-          <th>type</th>
-          <th>base_path</th>
-          <th>upstream_base_url</th>
-          <th>api key</th>
-          <th>token counting</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </section>
-
-  <dialog id="editor">
-    <form id="editor-form" method="dialog">
-      <h3 id="editor-title">新建 provider</h3>
-      <input type="hidden" name="mode" />
-      <input type="hidden" name="original_name" />
-
-      <label>name <input name="name" required placeholder="openai-main" /></label>
-      <label>type
-        <select name="type" required>
-          <option value="openai">openai</option>
-          <option value="anthropic">anthropic</option>
-        </select>
-      </label>
-      <label>base_path <input name="base_path" required placeholder="/openai" /></label>
-      <label>upstream_base_url <input name="upstream_base_url" required placeholder="https://api.openai.com/v1" /></label>
-      <label>upstream_api_key
-        <input name="upstream_api_key" placeholder="sk-... 或 ${ENV_VAR}" />
-        <span class="hint" id="apikey-hint">留空保留现有值</span>
-      </label>
-      <label>token_counting
-        <select name="token_counting">
-          <option value="inherit">inherit global</option>
-          <option value="true">force on</option>
-          <option value="false">force off</option>
-        </select>
-      </label>
-
-      <div class="headers-block">
-        <div class="row">
-          <span>upstream_headers</span>
-          <button type="button" id="add-header">+ 添加一行</button>
+<body class="admin-body">
+<div id="app" v-cloak>
+  <div class="admin-shell">
+    <header class="admin-topbar">
+      <div class="brand-block">
+        <div class="brand-mark">LP</div>
+        <div>
+          <p class="brand-kicker">Admin Console</p>
+          <h1>llm-proxy</h1>
         </div>
-        <div id="headers-list"></div>
       </div>
 
-      <div class="editor-actions">
-        <button type="button" id="cancel">取消</button>
-        <button type="submit" id="save">保存并热加载</button>
-      </div>
-      <div id="editor-error" class="error"></div>
-    </form>
-  </dialog>
-</main>
+      <nav class="top-nav">
+        <a href="/ui/" class="active">Providers</a>
+        <a href="/ui/metrics.html">Metrics</a>
+      </nav>
 
+      <div class="topbar-actions">
+        <div class="summary-grid">
+          <div v-for="card in summaryCards" :key="card.label" class="summary-pill">
+            <span>{{ card.label }}</span>
+            <strong>{{ card.value }}</strong>
+          </div>
+        </div>
+        <el-button
+          v-if="authEnabled"
+          id="logout"
+          class="logout-button"
+          plain
+          @click="logout"
+        >
+          登出
+        </el-button>
+      </div>
+    </header>
+
+    <main class="page-stack">
+      <section class="hero-section">
+        <div>
+          <p class="section-kicker">Provider Routing</p>
+          <h2>更轻松地维护上游 provider 配置</h2>
+          <p class="section-copy">使用更清爽的表单和表格来管理路由入口、上游地址、认证信息，以及 provider 级别的 token 统计策略。</p>
+        </div>
+        <div class="hero-action">
+          <el-button type="primary" size="large" @click="openCreate">
+            新建 Provider
+          </el-button>
+        </div>
+      </section>
+
+      <el-card shadow="never" class="panel-card">
+        <template #header>
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Providers</p>
+              <h3>当前路由列表</h3>
+            </div>
+            <div class="panel-head-actions">
+              <span class="soft-meta">{{ providers.length }} 个 provider</span>
+              <el-button plain @click="refresh" :loading="loading">刷新</el-button>
+            </div>
+          </div>
+        </template>
+
+        <el-alert
+          v-if="loadError"
+          :title="loadError"
+          type="error"
+          show-icon
+          :closable="false"
+          class="inline-alert"
+        ></el-alert>
+
+        <el-empty
+          v-if="!loading && providers.length === 0"
+          description="还没有配置 provider，先创建一个上游入口吧。"
+        >
+          <el-button type="primary" @click="openCreate">创建第一个 Provider</el-button>
+        </el-empty>
+
+        <el-table
+          v-else
+          :data="providers"
+          stripe
+          class="data-table"
+          empty-text="暂无 provider"
+        >
+          <el-table-column label="Provider" min-width="220">
+            <template #default="{ row }">
+              <div class="table-primary">{{ row.name }}</div>
+              <div class="table-secondary">热加载配置项</div>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="Type" width="120">
+            <template #default="{ row }">
+              <el-tag effect="plain" round>{{ row.type }}</el-tag>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="Base Path" min-width="140">
+            <template #default="{ row }">
+              <code class="inline-code">{{ row.base_path }}</code>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="Upstream" min-width="300">
+            <template #default="{ row }">
+              <code class="inline-code block-code">{{ row.upstream_base_url }}</code>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="API Key" min-width="150">
+            <template #default="{ row }">
+              <code class="inline-code">{{ row.api_key_preview || "(空)" }}</code>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="Token Counting" width="160">
+            <template #default="{ row }">
+              <el-tag :type="tokenCountingType(row.token_counting)" round>
+                {{ tokenCountingLabel(row.token_counting) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="操作" width="170" align="right" fixed="right">
+            <template #default="{ row }">
+              <div class="row-actions">
+                <el-button size="small" @click="openEdit(row)">编辑</el-button>
+                <el-button size="small" type="danger" plain @click="removeProvider(row)">删除</el-button>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </main>
+  </div>
+
+  <el-dialog
+    v-model="editor.visible"
+    :title="editor.mode === 'create' ? '新建 Provider' : '编辑 Provider'"
+    width="min(760px, calc(100vw - 24px))"
+    destroy-on-close
+  >
+    <p class="dialog-copy">保存后会写回配置文件，并对运行中的代理执行热加载。</p>
+
+        <el-form label-position="top" class="provider-form">
+          <div class="form-grid two-columns">
+            <el-form-item label="Name" required>
+          <el-input v-model.trim="editor.form.name" placeholder="openai-main"></el-input>
+            </el-form-item>
+
+            <el-form-item label="Type" required>
+              <el-select v-model="editor.form.type" placeholder="选择 provider 类型">
+            <el-option label="openai" value="openai"></el-option>
+            <el-option label="anthropic" value="anthropic"></el-option>
+              </el-select>
+            </el-form-item>
+          </div>
+
+          <div class="form-grid two-columns">
+            <el-form-item label="Base Path" required>
+          <el-input v-model.trim="editor.form.base_path" placeholder="/openai"></el-input>
+            </el-form-item>
+
+        <el-form-item label="Token Counting">
+          <el-segmented
+            v-model="editor.form.token_counting"
+            :options="tokenCountingOptions"
+          />
+        </el-form-item>
+      </div>
+
+      <el-form-item label="Upstream Base URL" required>
+        <el-input v-model.trim="editor.form.upstream_base_url" placeholder="https://api.openai.com/v1"></el-input>
+      </el-form-item>
+
+      <el-form-item :label="editor.mode === 'create' ? 'Upstream API Key' : 'Upstream API Key（留空保留原值）'" required>
+        <el-input
+          v-model="editor.form.upstream_api_key"
+          :placeholder="editor.mode === 'create' ? 'sk-... 或 ${ENV_VAR}' : '留空则保留现有值'"
+          show-password
+        ></el-input>
+        <div class="field-hint">{{ apiKeyHint }}</div>
+      </el-form-item>
+
+      <div class="headers-panel">
+        <div class="headers-head">
+          <div>
+            <h4>Upstream Headers</h4>
+            <p>可选，适合配置 `anthropic-version` 这类固定头。</p>
+          </div>
+          <el-button plain @click="addHeaderRow">添加一行</el-button>
+        </div>
+
+        <div v-if="editor.form.upstream_headers.length === 0" class="headers-empty">
+          暂无额外 header
+        </div>
+
+        <div
+          v-for="(header, index) in editor.form.upstream_headers"
+          :key="`header-${index}`"
+          class="header-row"
+        >
+          <el-input v-model.trim="header.key" placeholder="header"></el-input>
+          <el-input v-model.trim="header.value" placeholder="value"></el-input>
+          <el-button type="danger" plain @click="removeHeaderRow(index)">移除</el-button>
+        </div>
+      </div>
+    </el-form>
+
+    <template #footer>
+      <div class="dialog-footer">
+        <el-button @click="editor.visible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="saveProvider">
+          保存并热加载
+        </el-button>
+      </div>
+      <div v-if="editor.error" class="form-error">{{ editor.error }}</div>
+    </template>
+  </el-dialog>
+</div>
+
+<script src="vendor/vue.global.prod.js"></script>
+<script src="vendor/element-plus.full.min.js"></script>
 <script src="common.js"></script>
 <script src="app.js"></script>
 </body>
