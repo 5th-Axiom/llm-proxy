@@ -2,9 +2,10 @@ services:
   prometheus:
     image: prom/prometheus:v2.55.0
     # Bind to loopback so the TSDB and scrape config are not reachable from
-    # other hosts. Port-forward via SSH if you need the UI remotely.
+    # other hosts. Port-forward via SSH if you need the UI remotely. Host
+    # port can be overridden via PROMETHEUS_PORT when 9090 is taken.
     ports:
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./prometheus:/etc/prometheus:ro
       - prometheus-data:/prometheus
@@ -23,7 +24,7 @@ services:
   grafana:
     image: grafana/grafana:11.3.0
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
