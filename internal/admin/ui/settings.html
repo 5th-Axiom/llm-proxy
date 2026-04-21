@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>llm-proxy · settings</title>
+<link rel="stylesheet" href="vendor/element-plus.css" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body class="admin-body">
+<div id="app" v-cloak>
+  <div class="admin-shell">
+    <header class="admin-topbar">
+      <div class="brand-block">
+        <div class="brand-mark">LP</div>
+        <div>
+          <p class="brand-kicker">Admin Console</p>
+          <h1>llm-proxy</h1>
+        </div>
+      </div>
+
+      <nav class="top-nav">
+        <a href="/ui/">Providers</a>
+        <a href="/ui/users.html">Users</a>
+        <a href="/ui/metrics.html">Metrics</a>
+        <a href="/ui/settings.html" class="active">Settings</a>
+      </nav>
+
+      <div class="topbar-actions compact">
+        <el-button v-if="authEnabled" class="logout-button" plain @click="logout">登出</el-button>
+      </div>
+    </header>
+
+    <main class="page-stack">
+      <section class="hero-section">
+        <div>
+          <p class="section-kicker">Global Settings</p>
+          <h2>调整全局开关与安全入口</h2>
+          <p class="section-copy">所有改动会立刻写回配置文件并热加载；敏感凭据（密码哈希、scrape token）服务端只存一次，不会再回显明文。</p>
+        </div>
+      </section>
+
+      <el-alert
+        v-if="loadError"
+        :title="loadError"
+        type="error"
+        show-icon
+        :closable="false"
+        class="inline-alert"
+      ></el-alert>
+
+      <el-card shadow="never" class="panel-card">
+        <template #header>
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Runtime</p>
+              <h3>运行时开关</h3>
+            </div>
+            <div class="panel-head-actions">
+              <el-button plain @click="load" :loading="loading">刷新</el-button>
+            </div>
+          </div>
+        </template>
+
+        <el-form label-position="top" class="provider-form">
+          <div class="form-grid two-columns">
+            <el-form-item label="Token Counting（全局默认）">
+              <el-switch v-model="form.token_counting_enabled" @change="saveRuntime"></el-switch>
+              <div class="field-hint">关掉后，只有 provider 级别 force on 的 provider 才会记录 token。</div>
+            </el-form-item>
+            <el-form-item label="Usage Retention（天）">
+              <el-input-number
+                v-model="form.usage_retention_days"
+                :min="0"
+                :max="3650"
+                @change="saveRuntime"
+              ></el-input-number>
+              <div class="field-hint">0 = 不清理，持续累积；下一轮清理周期（每 24h）开始生效。</div>
+              <div class="link-row">
+                <el-button type="primary" size="small" plain @click="cleanupNow" :loading="cleaningUp">立即清理</el-button>
+                <span v-if="lastCleanup" class="soft-meta">上次清理 {{ lastCleanup }}</span>
+              </div>
+            </el-form-item>
+          </div>
+
+          <el-form-item label="Session TTL（分钟）">
+            <el-input-number
+              v-model="form.session_ttl_min"
+              :min="0"
+              :max="10080"
+              @change="saveRuntime"
+            ></el-input-number>
+            <div class="field-hint">0 表示使用默认 12 小时；已登录会话保留原过期时间，新登录生效新值。</div>
+          </el-form-item>
+        </el-form>
+      </el-card>
+
+      <el-card shadow="never" class="panel-card">
+        <template #header>
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Access</p>
+              <h3>Admin 登录密码</h3>
+            </div>
+            <div class="panel-head-actions">
+              <el-tag v-if="view.password_configured" type="success" round>configured</el-tag>
+              <el-tag v-else type="warning" round>not configured</el-tag>
+            </div>
+          </div>
+        </template>
+
+        <p class="section-copy">密码只存 PBKDF2-SHA256 哈希，修改需要提供当前密码。</p>
+        <el-button type="primary" @click="openPasswordDialog">{{ view.password_configured ? "修改密码" : "设置密码" }}</el-button>
+      </el-card>
+
+      <el-card shadow="never" class="panel-card">
+        <template #header>
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Scrape</p>
+              <h3>Prometheus Metrics Bearer Token</h3>
+            </div>
+            <div class="panel-head-actions">
+              <el-tag v-if="view.metrics_bearer_token_set" type="success" round>configured</el-tag>
+              <el-tag v-else type="info" round>not set</el-tag>
+            </div>
+          </div>
+        </template>
+
+        <p class="section-copy">
+          允许 Prometheus 用 <code class="inline-code">Authorization: Bearer &lt;token&gt;</code> 抓 <code class="inline-code">/metrics</code>，
+          无需 session cookie。设为空后 <code class="inline-code">/metrics</code> 仅通过 session cookie 鉴权。
+        </p>
+        <div class="link-row">
+          <el-button type="primary" @click="regenerateMetricsToken" :loading="metricsTokenBusy">
+            {{ view.metrics_bearer_token_set ? "重新生成" : "生成 token" }}
+          </el-button>
+          <el-button
+            v-if="view.metrics_bearer_token_set"
+            type="danger"
+            plain
+            @click="clearMetricsToken"
+            :loading="metricsTokenBusy"
+          >清除</el-button>
+        </div>
+      </el-card>
+    </main>
+  </div>
+
+  <!-- Change password dialog -->
+  <el-dialog
+    v-model="passwordDialog.visible"
+    :title="view.password_configured ? '修改密码' : '设置密码'"
+    width="min(520px, calc(100vw - 24px))"
+    destroy-on-close
+  >
+    <el-form label-position="top" class="provider-form">
+      <el-form-item
+        v-if="view.password_configured"
+        label="Current password"
+        required
+      >
+        <el-input
+          v-model="passwordDialog.current"
+          type="password"
+          show-password
+          autocomplete="current-password"
+        ></el-input>
+      </el-form-item>
+      <el-form-item label="New password" required>
+        <el-input
+          v-model="passwordDialog.next"
+          type="password"
+          show-password
+          autocomplete="new-password"
+          placeholder="至少 8 位"
+        ></el-input>
+      </el-form-item>
+      <el-form-item label="Repeat new password" required>
+        <el-input
+          v-model="passwordDialog.confirm"
+          type="password"
+          show-password
+          autocomplete="new-password"
+        ></el-input>
+      </el-form-item>
+    </el-form>
+    <el-alert
+      v-if="passwordDialog.error"
+      :title="passwordDialog.error"
+      type="error"
+      show-icon
+      :closable="false"
+      class="inline-alert"
+    ></el-alert>
+    <div class="editor-actions">
+      <el-button @click="passwordDialog.visible = false">取消</el-button>
+      <el-button type="primary" @click="submitPassword" :loading="passwordDialog.saving">保存</el-button>
+    </div>
+  </el-dialog>
+
+  <!-- Show-once metrics token dialog -->
+  <el-dialog
+    v-model="tokenDialog.visible"
+    title="保管好这把 scrape token"
+    width="min(580px, calc(100vw - 24px))"
+    :close-on-click-modal="false"
+    destroy-on-close
+  >
+    <el-alert
+      title="明文只显示这一次，关闭后服务端只存比较用的明文字符串但 UI 不会再回显。"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="inline-alert"
+    ></el-alert>
+    <p class="section-copy">把下面这串填入 Prometheus 的 <code class="inline-code">authorization.credentials_file</code>。</p>
+    <div class="token-reveal">
+      <code>{{ tokenDialog.token }}</code>
+    </div>
+    <div class="editor-actions">
+      <el-button @click="copyToken">复制到剪贴板</el-button>
+      <el-button type="primary" @click="tokenDialog.visible = false">我已保存</el-button>
+    </div>
+  </el-dialog>
+</div>
+
+<script src="vendor/vue.global.prod.js"></script>
+<script src="vendor/element-plus.full.min.js"></script>
+<script src="common.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>

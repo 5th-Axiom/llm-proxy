@@ -27,30 +27,56 @@ var uiFS embed.FS
 // Handler serves /api/* JSON endpoints plus the /ui static assets. When a
 // password hash is configured it also gates access with a session cookie.
 type Handler struct {
-	container          *appstate.Container
-	configPath         string
-	logger             *slog.Logger
-	passwordHash       string
-	metricsBearerToken string
-	sessions           *sessionStore
+	container  *appstate.Container
+	configPath string
+	logger     *slog.Logger
+	sessions   *sessionStore
 
 	// mu serializes mutations so concurrent admin calls cannot race on the
 	// read-modify-write cycle of the raw config.
 	mu sync.Mutex
 }
 
-// Options configures an admin Handler. PasswordHash enables session-based
-// authentication when non-empty. Metrics, if supplied, is mounted at
-// /metrics behind the same auth gate so provider names and token counts are
-// never readable without a valid session (when auth is enabled).
-// MetricsBearerToken, when set, allows a caller with a matching
-// `Authorization: Bearer <token>` to reach /metrics without a session —
-// intended for Prometheus and other headless scrapers.
+// passwordHash returns the currently-configured hash by reading the live
+// container state. A goroutine that rotates the admin password via the
+// Settings API sees the new value take effect immediately on its next call,
+// without needing to rebuild the admin handler.
+func (h *Handler) passwordHash() string {
+	state := h.container.Load()
+	if state == nil {
+		return ""
+	}
+	return state.Raw.Admin.PasswordHash
+}
+
+func (h *Handler) metricsBearerToken() string {
+	state := h.container.Load()
+	if state == nil {
+		return ""
+	}
+	return state.Raw.Admin.MetricsBearerToken
+}
+
+// sessionTTL resolves the cookie lifetime to use for freshly-issued
+// sessions. Existing sessions keep whatever expiry they were minted with.
+func (h *Handler) sessionTTL() time.Duration {
+	state := h.container.Load()
+	if state == nil {
+		return 12 * time.Hour
+	}
+	if m := state.Raw.Admin.SessionTTLMin; m > 0 {
+		return time.Duration(m) * time.Minute
+	}
+	return 12 * time.Hour
+}
+
+// Options configures the admin handler. Secret-holding fields
+// (password_hash, metrics_bearer_token) are no longer duplicated here —
+// they live in the raw config carried by the container so Settings-API
+// edits take effect immediately. Only Metrics (a live http.Handler) has
+// to be wired at construction.
 type Options struct {
-	PasswordHash       string
-	SessionTTLMin      int
-	MetricsBearerToken string
-	Metrics            http.Handler
+	Metrics http.Handler
 }
 
 func NewHandler(container *appstate.Container, configPath string, logger *slog.Logger, opts Options) http.Handler {
@@ -58,14 +84,11 @@ func NewHandler(container *appstate.Container, configPath string, logger *slog.L
 		logger = slog.Default()
 	}
 
-	ttl := time.Duration(opts.SessionTTLMin) * time.Minute
 	h := &Handler{
-		container:          container,
-		configPath:         configPath,
-		logger:             logger,
-		passwordHash:       opts.PasswordHash,
-		metricsBearerToken: opts.MetricsBearerToken,
-		sessions:           newSessionStore(ttl),
+		container:  container,
+		configPath: configPath,
+		logger:     logger,
+		sessions:   newSessionStore(),
 	}
 
 	mux := http.NewServeMux()
@@ -76,6 +99,10 @@ func NewHandler(container *appstate.Container, configPath string, logger *slog.L
 	mux.HandleFunc("/api/keys/", h.handleKeyItem)
 	mux.HandleFunc("/api/config", h.handleConfigSummary)
 	mux.HandleFunc("/api/usage/summary", h.handleUsageSummary)
+	mux.HandleFunc("/api/usage/cleanup", h.handleUsageCleanupNow)
+	mux.HandleFunc("/api/settings", h.handleSettings)
+	mux.HandleFunc("/api/settings/password", h.handleChangePassword)
+	mux.HandleFunc("/api/settings/metrics-token", h.handleMetricsToken)
 	mux.HandleFunc("/api/login", h.handleLogin)
 	mux.HandleFunc("/api/logout", h.handleLogout)
 	mux.HandleFunc("/api/auth", h.handleAuthStatus)
