@@ -216,7 +216,6 @@ func bootstrapWithAdmin(t *testing.T, hash, metricsBearer string) server.Handler
 server:
   listen: ":0"
   metrics_listen: "127.0.0.1:0"
-  tokens: ["proxy-token"]
 providers:
   - name: "placeholder"
     type: "openai"
@@ -231,6 +230,7 @@ providers:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+	cfg.Storage.SQLitePath = filepath.Join(dir, "test.db")
 	cfg.Admin.PasswordHash = hash
 	cfg.Admin.MetricsBearerToken = metricsBearer
 	handlers, err := server.BuildHandlers(context.Background(), cfg, configPath,

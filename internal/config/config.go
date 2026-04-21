@@ -24,9 +24,19 @@ const (
 type Config struct {
 	Server        ServerConfig        `yaml:"server"`
 	Admin         AdminConfig         `yaml:"admin,omitempty"`
+	Storage       StorageConfig       `yaml:"storage,omitempty"`
 	Transport     TransportConfig     `yaml:"transport"`
 	Providers     []ProviderConfig    `yaml:"providers"`
 	TokenCounting TokenCountingConfig `yaml:"token_counting"`
+}
+
+// StorageConfig controls the on-disk database used for users, API keys, and
+// per-request usage records. A single SQLite file is enough for the scales
+// llm-proxy is designed for; path is relative to the process CWD when not
+// absolute so systemd units and dev runs behave the same.
+type StorageConfig struct {
+	SQLitePath         string `yaml:"sqlite_path,omitempty"`
+	UsageRetentionDays int    `yaml:"usage_retention_days,omitempty"`
 }
 
 // AdminConfig controls authentication for the admin listener. When
@@ -179,6 +189,12 @@ func (c *Config) applyDefaults() {
 	if c.Transport.IdleConnTimeoutSec == 0 {
 		c.Transport.IdleConnTimeoutSec = 90
 	}
+	if strings.TrimSpace(c.Storage.SQLitePath) == "" {
+		c.Storage.SQLitePath = "./llm-proxy.db"
+	}
+	if c.Storage.UsageRetentionDays == 0 {
+		c.Storage.UsageRetentionDays = 90
+	}
 	for i := range c.Providers {
 		c.Providers[i].BasePath = normalizeBasePath(c.Providers[i].BasePath)
 		c.Providers[i].UpstreamBaseURL = strings.TrimRight(c.Providers[i].UpstreamBaseURL, "/")
@@ -195,9 +211,9 @@ func (c Config) Validate() error {
 	if c.Server.MetricsListen == c.Server.Listen {
 		return errors.New("server.metrics_listen must differ from server.listen")
 	}
-	if len(c.Server.Tokens) == 0 {
-		return errors.New("server.tokens must contain at least one token")
-	}
+	// server.tokens is retained for backward compatibility but ignored at
+	// runtime — proxy API keys now live in the store. Validate doesn't
+	// require any; the server startup logs a deprecation warning instead.
 	if len(c.Providers) == 0 {
 		return errors.New("providers must contain at least one provider")
 	}

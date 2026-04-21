@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"llm-proxy/internal/appstate"
+	"llm-proxy/internal/tokencount"
 )
 
 // Handler is the proxy-facing request router. It pulls the current AppState
@@ -37,9 +38,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := state.Authenticator.Authorize(r, provider.Name); err != nil {
+	authResult, err := state.Authenticator.Authorize(r)
+	if err != nil {
 		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
+	}
+
+	// Stash the resolved identity on the shared per-request TokenContext so
+	// metrics / logging / future usage-recording all see the same attribution
+	// without a second auth lookup.
+	if tc := tokencount.FromContext(r.Context()); tc != nil {
+		tc.UserID = authResult.UserID
+		tc.KeyID = authResult.KeyID
 	}
 
 	if err := state.Forwarder.Forward(w, r, provider, upstreamPath); err != nil {

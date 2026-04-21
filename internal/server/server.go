@@ -13,6 +13,7 @@ import (
 	"llm-proxy/internal/observability"
 	"llm-proxy/internal/proxy"
 	"llm-proxy/internal/router"
+	"llm-proxy/internal/store"
 	"llm-proxy/internal/tokencount"
 )
 
@@ -33,12 +34,16 @@ type Handlers struct {
 // configPath may be empty, in which case the admin UI and API are still
 // served but mutations that try to persist will fail — useful for tests that
 // don't care about on-disk state.
-func BuildHandlers(_ context.Context, cfg config.Config, configPath string, logger *slog.Logger) (Handlers, error) {
+func BuildHandlers(ctx context.Context, cfg config.Config, configPath string, logger *slog.Logger) (Handlers, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	resolved := cfg.Resolved()
+
+	if len(resolved.Server.Tokens) > 0 {
+		logger.Warn("server.tokens is deprecated and ignored; issue API keys via the admin /api/users/.../keys endpoint instead")
+	}
 
 	// tiktoken state is a package-level cache so it's safe to initialise
 	// once here; it's keyed by model name, not config state, and Reload
@@ -58,9 +63,15 @@ func BuildHandlers(_ context.Context, cfg config.Config, configPath string, logg
 		}
 	}
 
+	st, err := store.Open(ctx, resolved.Storage.SQLitePath)
+	if err != nil {
+		return Handlers{}, err
+	}
+
 	client := proxy.NewHTTPClient(resolved.Transport)
-	container := appstate.NewContainer(client)
+	container := appstate.NewContainer(client, st, logger)
 	if err := container.Install(cfg); err != nil {
+		_ = st.Close()
 		return Handlers{}, err
 	}
 

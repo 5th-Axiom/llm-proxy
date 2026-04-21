@@ -71,6 +71,9 @@ func NewHandler(container *appstate.Container, configPath string, logger *slog.L
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/providers", h.handleProvidersCollection)
 	mux.HandleFunc("/api/providers/", h.handleProviderItem)
+	mux.HandleFunc("/api/users", h.handleUsersCollection)
+	mux.HandleFunc("/api/users/", h.handleUserItem)
+	mux.HandleFunc("/api/keys/", h.handleKeyItem)
 	mux.HandleFunc("/api/config", h.handleConfigSummary)
 	mux.HandleFunc("/api/login", h.handleLogin)
 	mux.HandleFunc("/api/logout", h.handleLogout)
@@ -123,11 +126,12 @@ type providerInput struct {
 }
 
 type summaryView struct {
-	Listen        string   `json:"listen"`
-	MetricsListen string   `json:"metrics_listen"`
-	TokenCounting bool     `json:"token_counting_enabled"`
-	Tokens        []string `json:"tokens"` // previewed, never raw
-	ProviderCount int      `json:"provider_count"`
+	Listen        string `json:"listen"`
+	MetricsListen string `json:"metrics_listen"`
+	TokenCounting bool   `json:"token_counting_enabled"`
+	ProviderCount int    `json:"provider_count"`
+	UserCount     int    `json:"user_count"`
+	ActiveKeys    int    `json:"active_keys"`
 }
 
 func (h *Handler) handleConfigSummary(w http.ResponseWriter, r *http.Request) {
@@ -141,17 +145,19 @@ func (h *Handler) handleConfigSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	previews := make([]string, 0, len(state.Raw.Server.Tokens))
-	for _, t := range state.Raw.Server.Tokens {
-		previews = append(previews, preview(t))
+	users, _ := h.container.Store().ListUsers(r.Context())
+	activeKeys := 0
+	for _, u := range users {
+		activeKeys += u.KeyCount
 	}
 
 	writeJSON(w, http.StatusOK, summaryView{
 		Listen:        state.Raw.Server.Listen,
 		MetricsListen: state.Raw.Server.MetricsListen,
 		TokenCounting: state.Raw.TokenCounting.Enabled,
-		Tokens:        previews,
 		ProviderCount: len(state.Raw.Providers),
+		UserCount:     len(users),
+		ActiveKeys:    activeKeys,
 	})
 }
 
