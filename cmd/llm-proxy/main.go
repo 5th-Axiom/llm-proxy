@@ -23,7 +23,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv, err := server.New(context.Background(), cfg, logger)
+	srv, err := server.New(context.Background(), cfg, configPath, logger)
 	if err != nil {
 		logger.Error("build server", "err", err)
 		os.Exit(1)

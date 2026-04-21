@@ -56,7 +56,7 @@ func benchmarkHandler(b *testing.B, upstreamBaseURL string) http.Handler {
 		},
 	}
 
-	handlers, err := BuildHandlers(b.Context(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handlers, err := BuildHandlers(b.Context(), cfg, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		b.Fatalf("BuildHandlers() error = %v", err)
 	}

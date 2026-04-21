@@ -6,43 +6,43 @@ import (
 	"log/slog"
 	"net/http"
 
-	"llm-proxy/internal/auth"
-	"llm-proxy/internal/providers"
-	"llm-proxy/internal/proxy"
+	"llm-proxy/internal/appstate"
 )
 
+// Handler is the proxy-facing request router. It pulls the current AppState
+// from the container per request so admin-triggered reloads apply to the
+// next call without restarting.
 type Handler struct {
-	registry      *providers.Registry
-	authenticator *auth.Authenticator
-	forwarder     *proxy.Forwarder
-	logger        *slog.Logger
+	container *appstate.Container
+	logger    *slog.Logger
 }
 
-func New(registry *providers.Registry, authenticator *auth.Authenticator, forwarder *proxy.Forwarder, logger *slog.Logger) http.Handler {
+func New(container *appstate.Container, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{
-		registry:      registry,
-		authenticator: authenticator,
-		forwarder:     forwarder,
-		logger:        logger,
-	}
+	return &Handler{container: container, logger: logger}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	provider, upstreamPath, ok := h.registry.Match(r.URL.Path)
+	state := h.container.Load()
+	if state == nil {
+		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		return
+	}
+
+	provider, upstreamPath, ok := state.Registry.Match(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 
-	if err := h.authenticator.Authorize(r, provider.Name); err != nil {
+	if err := state.Authenticator.Authorize(r, provider.Name); err != nil {
 		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
-	if err := h.forwarder.Forward(w, r, provider, upstreamPath); err != nil {
+	if err := state.Forwarder.Forward(w, r, provider, upstreamPath); err != nil {
 		status := http.StatusBadGateway
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			status = 499

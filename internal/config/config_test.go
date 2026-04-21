@@ -3,10 +3,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestLoadParsesProvidersAndExpandsEnv(t *testing.T) {
+func TestLoadPreservesEnvPlaceholdersAndResolvedExpands(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "upstream-openai-key")
 
 	configPath := writeTempConfig(t, `
@@ -28,30 +29,78 @@ providers:
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.Server.Listen != ":8080" {
-		t.Fatalf("Listen = %q, want %q", cfg.Server.Listen, ":8080")
+	raw := cfg.Providers[0].UpstreamAPIKey
+	if raw != "${OPENAI_API_KEY}" {
+		t.Fatalf("raw UpstreamAPIKey = %q, want env placeholder preserved", raw)
 	}
 
-	if len(cfg.Server.Tokens) != 1 || cfg.Server.Tokens[0] != "proxy-token" {
-		t.Fatalf("Tokens = %#v, want single proxy token", cfg.Server.Tokens)
+	resolved := cfg.Resolved()
+	if got := resolved.Providers[0].UpstreamAPIKey; got != "upstream-openai-key" {
+		t.Fatalf("resolved UpstreamAPIKey = %q, want expanded env value", got)
 	}
 
-	if len(cfg.Providers) != 1 {
-		t.Fatalf("Providers len = %d, want 1", len(cfg.Providers))
+	// Resolved must not mutate the original raw Config.
+	if cfg.Providers[0].UpstreamAPIKey != "${OPENAI_API_KEY}" {
+		t.Fatalf("Resolved() mutated the source Config")
+	}
+}
+
+func TestSaveRoundTripsEnvPlaceholders(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "should-not-appear-in-file")
+
+	configPath := writeTempConfig(t, `
+server:
+  listen: ":8080"
+  metrics_listen: "127.0.0.1:8081"
+  tokens:
+    - "proxy-token"
+
+providers:
+  - name: "openai-main"
+    type: "openai"
+    base_path: "/openai"
+    upstream_base_url: "https://api.openai.com"
+    upstream_api_key: "${OPENAI_API_KEY}"
+`)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
 	}
 
-	provider := cfg.Providers[0]
-	if provider.Name != "openai-main" {
-		t.Fatalf("provider.Name = %q, want openai-main", provider.Name)
+	cfg.Providers = append(cfg.Providers, ProviderConfig{
+		Name:            "anthropic-main",
+		Type:            ProviderTypeAnthropic,
+		BasePath:        "/anthropic",
+		UpstreamBaseURL: "https://api.anthropic.com",
+		UpstreamAPIKey:  "${ANTHROPIC_API_KEY}",
+	})
+
+	if err := Save(configPath, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
 	}
-	if provider.Type != ProviderTypeOpenAI {
-		t.Fatalf("provider.Type = %q, want %q", provider.Type, ProviderTypeOpenAI)
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
 	}
-	if provider.BasePath != "/openai" {
-		t.Fatalf("provider.BasePath = %q, want /openai", provider.BasePath)
+	contents := string(data)
+	if !strings.Contains(contents, "${OPENAI_API_KEY}") {
+		t.Errorf("saved config lost ${OPENAI_API_KEY} placeholder:\n%s", contents)
 	}
-	if provider.UpstreamAPIKey != "upstream-openai-key" {
-		t.Fatalf("provider.UpstreamAPIKey = %q, want expanded env value", provider.UpstreamAPIKey)
+	if !strings.Contains(contents, "${ANTHROPIC_API_KEY}") {
+		t.Errorf("saved config missing new ${ANTHROPIC_API_KEY} placeholder:\n%s", contents)
+	}
+	if strings.Contains(contents, "should-not-appear-in-file") {
+		t.Errorf("saved config leaked expanded env value:\n%s", contents)
+	}
+
+	reloaded, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("reload after Save() error = %v", err)
+	}
+	if len(reloaded.Providers) != 2 {
+		t.Fatalf("reloaded providers len = %d, want 2", len(reloaded.Providers))
 	}
 }
 
