@@ -28,8 +28,11 @@
 - 非流式请求默认 60s 上游超时；`Accept: text/event-stream` 或请求体含 `"stream": true` 时不加超时
 - Admin 管理界面（与 `/metrics` 共用 loopback 监听）：
   - Web UI：`http://127.0.0.1:8081/ui/`
-  - REST API：`GET/POST/PUT/DELETE /api/providers[/:name]`、`GET /api/config`
-  - 改完立即热生效，不重启进程；写回 YAML 时保留 `${ENV_VAR}` 占位符，不会把上游 key 明文落盘
+    - Providers 页：增删改 provider，改完立即热生效，不重启进程
+    - Metrics 页：请求数 / 状态分布 / 按 provider 的 token 使用，3s 自动刷新
+  - REST API：`GET/POST/PUT/DELETE /api/providers[/:name]`、`GET /api/config`、`GET /metrics`
+  - 可选密码登录：在 `admin.password_hash` 填入 `./llm-proxy -hash-password` 生成的哈希，开启 session cookie 鉴权；未设置则保持开放（适合纯 loopback 场景）
+  - 写回 YAML 时保留 `${ENV_VAR}` 占位符，不会把上游 key 明文落盘
 
 ## 设计原则
 

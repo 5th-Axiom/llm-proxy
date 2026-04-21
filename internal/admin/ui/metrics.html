@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>llm-proxy · metrics</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header>
+  <h1>llm-proxy</h1>
+  <nav>
+    <a href="/ui/">Providers</a>
+    <a href="/ui/metrics.html" class="active">Metrics</a>
+  </nav>
+  <div class="header-right">
+    <span class="summary"><label><input type="checkbox" id="auto" checked /> auto-refresh (3s)</label></span>
+    <button id="logout" class="logout" hidden>登出</button>
+  </div>
+</header>
+
+<main>
+  <section>
+    <div class="row">
+      <h2>概览</h2>
+      <span id="last-updated" class="summary"></span>
+    </div>
+    <div id="cards" class="cards"></div>
+  </section>
+
+  <section>
+    <h2>按状态码</h2>
+    <table id="status-table">
+      <thead><tr><th>status</th><th>count</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>按 provider 的 token 使用</h2>
+    <table id="token-table">
+      <thead><tr><th>provider</th><th>prompt</th><th>completion</th><th>total</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="summary" id="token-empty" hidden>还没有记录 token。要记录需要在全局或 provider 级别启用 <code>token_counting</code>。</p>
+  </section>
+
+  <section>
+    <details>
+      <summary>原始 Prometheus 输出</summary>
+      <pre id="raw-prom" class="raw-prom"></pre>
+    </details>
+  </section>
+</main>
+
+<script src="common.js"></script>
+<script src="metrics.js"></script>
+</body>
+</html>

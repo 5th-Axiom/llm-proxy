@@ -2,13 +2,20 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
-<title>llm-proxy admin</title>
+<title>llm-proxy · providers</title>
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 <header>
   <h1>llm-proxy</h1>
-  <div id="summary" class="summary"></div>
+  <nav>
+    <a href="/ui/" class="active">Providers</a>
+    <a href="/ui/metrics.html">Metrics</a>
+  </nav>
+  <div class="header-right">
+    <span id="summary" class="summary"></span>
+    <button id="logout" class="logout" hidden>登出</button>
+  </div>
 </header>
 
 <main>
@@ -77,6 +84,7 @@
   </dialog>
 </main>
 
+<script src="common.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -1,11 +1,19 @@
 server:
   listen: ":8080"
-  # /metrics is served from a separate listener so provider names and token
-  # usage are not exposed on the public listener. Default: 127.0.0.1:8081.
+  # /metrics and the admin UI live on this loopback listener so provider
+  # names and token usage are not exposed on the public listener.
   metrics_listen: "127.0.0.1:8081"
   tokens:
     - "proxy-token-1"
     - "proxy-token-2"
+
+# Admin auth. Leave password_hash empty to keep the admin UI open (appropriate
+# when the loopback listener is your only trust boundary). To require login,
+# generate a hash via `./llm-proxy -hash-password` (reads password from stdin)
+# and paste it here.
+# admin:
+#   password_hash: "pbkdf2-sha256$210000$...$..."
+#   session_ttl_min: 720  # 12h default
 
 transport:
   max_idle_conns: 512

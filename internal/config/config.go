@@ -23,9 +23,20 @@ const (
 // lets the admin API round-trip the file without losing env-var references.
 type Config struct {
 	Server        ServerConfig        `yaml:"server"`
+	Admin         AdminConfig         `yaml:"admin,omitempty"`
 	Transport     TransportConfig     `yaml:"transport"`
 	Providers     []ProviderConfig    `yaml:"providers"`
 	TokenCounting TokenCountingConfig `yaml:"token_counting"`
+}
+
+// AdminConfig controls authentication for the admin listener. When
+// PasswordHash is empty, the admin UI and API are open — appropriate when the
+// listener is loopback-only and trusted to its OS boundary. Set PasswordHash
+// (generate with `llm-proxy -hash-password`) to require login via cookie
+// session.
+type AdminConfig struct {
+	PasswordHash  string `yaml:"password_hash,omitempty"`
+	SessionTTLMin int    `yaml:"session_ttl_min,omitempty"`
 }
 
 type TokenCountingConfig struct {

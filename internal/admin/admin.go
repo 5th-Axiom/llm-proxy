@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"llm-proxy/internal/appstate"
 	"llm-proxy/internal/config"
@@ -23,32 +24,54 @@ import (
 //go:embed ui
 var uiFS embed.FS
 
-// Handler serves /api/* JSON endpoints plus the /ui static assets. Mount it
-// behind a loopback listener — it performs no authentication of its own.
+// Handler serves /api/* JSON endpoints plus the /ui static assets. When a
+// password hash is configured it also gates access with a session cookie.
 type Handler struct {
-	container  *appstate.Container
-	configPath string
-	logger     *slog.Logger
+	container    *appstate.Container
+	configPath   string
+	logger       *slog.Logger
+	passwordHash string
+	sessions     *sessionStore
 
 	// mu serializes mutations so concurrent admin calls cannot race on the
 	// read-modify-write cycle of the raw config.
 	mu sync.Mutex
 }
 
-func NewHandler(container *appstate.Container, configPath string, logger *slog.Logger) http.Handler {
+// Options configures an admin Handler. PasswordHash enables session-based
+// authentication when non-empty. Metrics, if supplied, is mounted at
+// /metrics behind the same auth gate so provider names and token counts are
+// never readable without a valid session (when auth is enabled).
+type Options struct {
+	PasswordHash  string
+	SessionTTLMin int
+	Metrics       http.Handler
+}
+
+func NewHandler(container *appstate.Container, configPath string, logger *slog.Logger, opts Options) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	ttl := time.Duration(opts.SessionTTLMin) * time.Minute
 	h := &Handler{
-		container:  container,
-		configPath: configPath,
-		logger:     logger,
+		container:    container,
+		configPath:   configPath,
+		logger:       logger,
+		passwordHash: opts.PasswordHash,
+		sessions:     newSessionStore(ttl),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/providers", h.handleProvidersCollection)
 	mux.HandleFunc("/api/providers/", h.handleProviderItem)
 	mux.HandleFunc("/api/config", h.handleConfigSummary)
+	mux.HandleFunc("/api/login", h.handleLogin)
+	mux.HandleFunc("/api/logout", h.handleLogout)
+	mux.HandleFunc("/api/auth", h.handleAuthStatus)
+	if opts.Metrics != nil {
+		mux.Handle("/metrics", opts.Metrics)
+	}
 
 	sub, err := fs.Sub(uiFS, "ui")
 	if err != nil {
@@ -65,7 +88,7 @@ func NewHandler(container *appstate.Container, configPath string, logger *slog.L
 		http.NotFound(w, r)
 	})
 
-	return mux
+	return h.requireAuth(mux)
 }
 
 // providerView is the serialised shape of a provider over the API. Sensitive
