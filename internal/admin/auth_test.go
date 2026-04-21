@@ -144,7 +144,71 @@ func TestAdminAuthEnabledBlocksAPIAndRedirectsUI(t *testing.T) {
 	}
 }
 
+func TestMetricsBearerTokenBypassesSessionAuth(t *testing.T) {
+	hash, err := admin.HashPassword("secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlers := bootstrapWithAdmin(t, hash, "scrape-token-xyz")
+	ts := httptest.NewServer(handlers.Admin)
+	defer ts.Close()
+
+	// No credentials → 401 (auth enabled).
+	r, err := http.Get(ts.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("no-auth /metrics = %d, want 401", r.StatusCode)
+	}
+
+	// Wrong bearer → 401.
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/metrics", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	r, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("wrong-bearer /metrics = %d, want 401", r.StatusCode)
+	}
+
+	// Correct bearer → 200, scraper gets metrics without session cookie.
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/metrics?format=prometheus", nil)
+	req.Header.Set("Authorization", "Bearer scrape-token-xyz")
+	r, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("scrape /metrics = %d, want 200", r.StatusCode)
+	}
+	if !strings.Contains(string(body), "llm_proxy_requests_total") {
+		t.Fatalf("scrape body missing expected metric:\n%s", body)
+	}
+
+	// Bearer must NOT unlock the rest of the admin surface.
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/api/providers", nil)
+	req.Header.Set("Authorization", "Bearer scrape-token-xyz")
+	r, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("/api/providers with metrics bearer = %d, want 401", r.StatusCode)
+	}
+}
+
 func bootstrapWithHash(t *testing.T, hash string) server.Handlers {
+	return bootstrapWithAdmin(t, hash, "")
+}
+
+func bootstrapWithAdmin(t *testing.T, hash, metricsBearer string) server.Handlers {
 	t.Helper()
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
@@ -168,6 +232,7 @@ providers:
 		t.Fatalf("Load: %v", err)
 	}
 	cfg.Admin.PasswordHash = hash
+	cfg.Admin.MetricsBearerToken = metricsBearer
 	handlers, err := server.BuildHandlers(context.Background(), cfg, configPath,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {

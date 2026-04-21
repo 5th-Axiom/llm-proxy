@@ -78,9 +78,10 @@ func BuildHandlers(_ context.Context, cfg config.Config, configPath string, logg
 	publicMux.Handle("/", proxyHandler)
 
 	adminHandler := admin.NewHandler(container, configPath, logger, admin.Options{
-		PasswordHash:  cfg.Admin.PasswordHash,
-		SessionTTLMin: cfg.Admin.SessionTTLMin,
-		Metrics:       metrics.Handler(),
+		PasswordHash:       cfg.Admin.PasswordHash,
+		SessionTTLMin:      cfg.Admin.SessionTTLMin,
+		MetricsBearerToken: cfg.Admin.MetricsBearerToken,
+		Metrics:            metrics.Handler(),
 	})
 
 	return Handlers{Public: publicMux, Admin: adminHandler, Container: container}, nil

@@ -27,11 +27,12 @@ var uiFS embed.FS
 // Handler serves /api/* JSON endpoints plus the /ui static assets. When a
 // password hash is configured it also gates access with a session cookie.
 type Handler struct {
-	container    *appstate.Container
-	configPath   string
-	logger       *slog.Logger
-	passwordHash string
-	sessions     *sessionStore
+	container          *appstate.Container
+	configPath         string
+	logger             *slog.Logger
+	passwordHash       string
+	metricsBearerToken string
+	sessions           *sessionStore
 
 	// mu serializes mutations so concurrent admin calls cannot race on the
 	// read-modify-write cycle of the raw config.
@@ -42,10 +43,14 @@ type Handler struct {
 // authentication when non-empty. Metrics, if supplied, is mounted at
 // /metrics behind the same auth gate so provider names and token counts are
 // never readable without a valid session (when auth is enabled).
+// MetricsBearerToken, when set, allows a caller with a matching
+// `Authorization: Bearer <token>` to reach /metrics without a session —
+// intended for Prometheus and other headless scrapers.
 type Options struct {
-	PasswordHash  string
-	SessionTTLMin int
-	Metrics       http.Handler
+	PasswordHash       string
+	SessionTTLMin      int
+	MetricsBearerToken string
+	Metrics            http.Handler
 }
 
 func NewHandler(container *appstate.Container, configPath string, logger *slog.Logger, opts Options) http.Handler {
@@ -55,11 +60,12 @@ func NewHandler(container *appstate.Container, configPath string, logger *slog.L
 
 	ttl := time.Duration(opts.SessionTTLMin) * time.Minute
 	h := &Handler{
-		container:    container,
-		configPath:   configPath,
-		logger:       logger,
-		passwordHash: opts.PasswordHash,
-		sessions:     newSessionStore(ttl),
+		container:          container,
+		configPath:         configPath,
+		logger:             logger,
+		passwordHash:       opts.PasswordHash,
+		metricsBearerToken: opts.MetricsBearerToken,
+		sessions:           newSessionStore(ttl),
 	}
 
 	mux := http.NewServeMux()
