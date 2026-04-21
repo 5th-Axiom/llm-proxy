@@ -609,3 +609,35 @@ a {
     border-radius: 20px;
   }
 }
+
+.keys-drawer-body {
+  padding: 0 22px 22px;
+}
+
+.drawer-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 16px 0 20px;
+}
+
+.drawer-head-row h3 {
+  margin: 4px 0 2px 0;
+  font-size: 18px;
+}
+
+.token-reveal {
+  margin: 14px 0 18px 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--el-fill-color-light);
+  border: 1px dashed var(--el-border-color);
+  word-break: break-all;
+  font-family: "SFMono-Regular", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--el-text-color-primary);
+  user-select: all;
+}
+
