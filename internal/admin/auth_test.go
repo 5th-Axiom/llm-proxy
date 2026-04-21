@@ -204,6 +204,40 @@ func TestMetricsBearerTokenBypassesSessionAuth(t *testing.T) {
 	}
 }
 
+// TestLoginPageAssetsReachableBeforeAuth guards against regressions where the
+// login form's JS/CSS dependencies slip behind the auth gate and the form
+// silently fails to render. The login page is a Vue app — if the vendored
+// Vue/ElementPlus bundles 302 back to /login.html, v-cloak keeps everything
+// hidden and the user sees a blank screen.
+func TestLoginPageAssetsReachableBeforeAuth(t *testing.T) {
+	hash, err := admin.HashPassword("secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlers := bootstrapWithAdmin(t, hash, "")
+	ts := httptest.NewServer(handlers.Admin)
+	defer ts.Close()
+
+	noRedirect := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+	for _, path := range []string{
+		"/ui/login.html",
+		"/ui/login.js",
+		"/ui/styles.css",
+		"/ui/vendor/vue.global.prod.js",
+		"/ui/vendor/element-plus.full.min.js",
+		"/ui/vendor/element-plus.css",
+	} {
+		r, err := noRedirect.Get(ts.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		r.Body.Close()
+		if r.StatusCode != http.StatusOK {
+			t.Errorf("unauthenticated %s status = %d, want 200", path, r.StatusCode)
+		}
+	}
+}
+
 func bootstrapWithHash(t *testing.T, hash string) server.Handlers {
 	return bootstrapWithAdmin(t, hash, "")
 }
