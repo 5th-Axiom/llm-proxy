@@ -374,18 +374,35 @@ func (h *Handler) deleteProvider(w http.ResponseWriter, _ *http.Request, name st
 // container, and only then writes it to disk. Installing first ensures we
 // never persist a config we couldn't actually run; if the caller was racing
 // against another mutation the container mutex catches it too.
+//
+// If persistence fails, the in-memory state is rolled back to the snapshot
+// captured *before* Install so the live process isn't silently divergent
+// from what's on disk. A previous version of this function read prev from
+// the container *after* Install — which returned the just-installed new
+// state, turning the rollback into a no-op.
 func (h *Handler) applyAndPersist(raw config.Config) error {
 	if err := raw.Validate(); err != nil {
 		return err
 	}
+
+	prevState := h.container.Load()
+	if prevState == nil {
+		// Admin API shouldn't be reachable before the first Install during
+		// startup, but defend anyway: without a prev we can't roll back,
+		// so refuse to swap the live state until the operator retries.
+		return errors.New("initial state not ready")
+	}
+	prevRaw := prevState.Raw
+
 	if err := h.container.Install(raw); err != nil {
 		return err
 	}
 	if err := config.Save(h.configPath, raw); err != nil {
-		// Best-effort rollback: reinstall the previous state.
-		if prev := h.container.Load(); prev != nil {
-			_ = h.container.Install(prev.Raw)
-		}
+		// Best-effort rollback: restore the pre-Install snapshot. If the
+		// restore itself fails (shouldn't — prevRaw validated on its way
+		// in) we surface the original persist error rather than the
+		// restore error so the operator sees the root cause.
+		_ = h.container.Install(prevRaw)
 		return fmt.Errorf("persist config: %w", err)
 	}
 	return nil

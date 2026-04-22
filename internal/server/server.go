@@ -124,14 +124,19 @@ func New(ctx context.Context, cfg config.Config, configPath string, logger *slog
 		return nil, err
 	}
 
+	// Listen addresses may contain ${ENV_VAR} placeholders (see
+	// config.Config.Resolved). Binding net.Listen to an unexpanded value
+	// fails with an opaque parse error; resolve once at this seam so the
+	// rest of the startup sees real addresses.
+	resolved := cfg.Resolved()
 	return &Service{
 		Public: &http.Server{
-			Addr:              cfg.Server.Listen,
+			Addr:              resolved.Server.Listen,
 			Handler:           handlers.Public,
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		Admin: &http.Server{
-			Addr:              cfg.Server.MetricsListen,
+			Addr:              resolved.Server.MetricsListen,
 			Handler:           handlers.Admin,
 			ReadHeaderTimeout: 5 * time.Second,
 		},
