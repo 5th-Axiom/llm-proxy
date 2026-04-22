@@ -51,9 +51,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Log the resolved addresses rather than the raw ${VAR} forms so
+	// operators can see what net.Listen will actually try to bind.
+	resolved := cfg.Resolved()
 	logger.Info("starting llm proxy",
-		"listen", cfg.Server.Listen,
-		"metrics_listen", cfg.Server.MetricsListen,
+		"listen", resolved.Server.Listen,
+		"metrics_listen", resolved.Server.MetricsListen,
 	)
 	if err := srv.ListenAndServe(); err != nil {
 		logger.Error("server exited", "err", err)

@@ -7,6 +7,61 @@ import (
 	"testing"
 )
 
+// TestResolvedExpandsInfrastructureFields guards against a regression where
+// only provider + token fields got ${ENV_VAR} expansion and listen
+// addresses / storage paths stayed raw — net.Listen would then fail with
+// an opaque parse error on the unexpanded "${VAR}" literal.
+func TestResolvedExpandsInfrastructureFields(t *testing.T) {
+	t.Setenv("LLMP_PROXY_LISTEN", ":18080")
+	t.Setenv("LLMP_METRICS_LISTEN", "127.0.0.1:18081")
+	t.Setenv("LLMP_DB_PATH", "/var/lib/llm-proxy/db")
+	t.Setenv("LLMP_METRICS_TOKEN", "scrape-bearer")
+
+	cfg := Config{
+		Server: ServerConfig{
+			Listen:        "${LLMP_PROXY_LISTEN}",
+			MetricsListen: "${LLMP_METRICS_LISTEN}",
+			Tokens:        []string{"t"},
+		},
+		Admin: AdminConfig{
+			MetricsBearerToken: "${LLMP_METRICS_TOKEN}",
+		},
+		Storage: StorageConfig{
+			SQLitePath: "${LLMP_DB_PATH}/main.db",
+		},
+		Providers: []ProviderConfig{{
+			Name:            "p",
+			Type:            ProviderTypeOpenAI,
+			BasePath:        "/p",
+			UpstreamBaseURL: "http://x",
+			UpstreamAPIKey:  "k",
+		}},
+	}
+
+	got := cfg.Resolved()
+	if got.Server.Listen != ":18080" {
+		t.Errorf("Server.Listen = %q, want :18080", got.Server.Listen)
+	}
+	if got.Server.MetricsListen != "127.0.0.1:18081" {
+		t.Errorf("Server.MetricsListen = %q, want 127.0.0.1:18081", got.Server.MetricsListen)
+	}
+	if got.Storage.SQLitePath != "/var/lib/llm-proxy/db/main.db" {
+		t.Errorf("Storage.SQLitePath = %q, want expanded path", got.Storage.SQLitePath)
+	}
+	if got.Admin.MetricsBearerToken != "scrape-bearer" {
+		t.Errorf("Admin.MetricsBearerToken = %q, want expanded", got.Admin.MetricsBearerToken)
+	}
+
+	// Source config must remain raw so a subsequent Save round-trips the
+	// placeholders back to disk.
+	if cfg.Server.Listen != "${LLMP_PROXY_LISTEN}" {
+		t.Errorf("Resolved() mutated cfg.Server.Listen: %q", cfg.Server.Listen)
+	}
+	if cfg.Storage.SQLitePath != "${LLMP_DB_PATH}/main.db" {
+		t.Errorf("Resolved() mutated cfg.Storage.SQLitePath: %q", cfg.Storage.SQLitePath)
+	}
+}
+
 func TestLoadPreservesEnvPlaceholdersAndResolvedExpands(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "upstream-openai-key")
 

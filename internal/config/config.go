@@ -142,9 +142,22 @@ func Save(path string, cfg Config) error {
 // Resolved returns a deep copy of the config with ${ENV_VAR} placeholders in
 // string fields expanded via os.ExpandEnv. The original Config is left
 // untouched so subsequent Save writes back the raw form.
+//
+// Every user-facing string field that plausibly holds a secret or
+// environment-specific value is expanded, including the listen addresses
+// and storage path — binding net.Listen to a literal "${PROXY_LISTEN}"
+// would fail with an unhelpful parse error deep in the stdlib.
+// Admin.PasswordHash is deliberately left alone: it is a fixed-format
+// PBKDF2 hash and never contains env-var placeholders.
 func (c Config) Resolved() Config {
 	out := c
+	out.Server.Listen = os.ExpandEnv(c.Server.Listen)
+	out.Server.MetricsListen = os.ExpandEnv(c.Server.MetricsListen)
 	out.Server.Tokens = expandAll(c.Server.Tokens)
+
+	out.Admin.MetricsBearerToken = os.ExpandEnv(c.Admin.MetricsBearerToken)
+
+	out.Storage.SQLitePath = os.ExpandEnv(c.Storage.SQLitePath)
 
 	out.Providers = make([]ProviderConfig, len(c.Providers))
 	for i, p := range c.Providers {
